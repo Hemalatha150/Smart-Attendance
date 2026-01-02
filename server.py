@@ -1,190 +1,125 @@
-# In your server.py file
-
-from flask import Flask, request, send_from_directory
-from flask_cors import CORS
-import numpy as np
 import cv2
 import torch
+import numpy as np
 import sqlite3
+from flask import Flask, request, jsonify, render_template
 from facenet_pytorch import MTCNN, InceptionResnetV1
-from sklearn.metrics.pairwise import cosine_similarity
 from datetime import datetime
 import os
 
-# Set device
+app = Flask(__name__)
+
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-# Initialize FaceNet models
-mtcnn = MTCNN(image_size=160, margin=0, min_face_size=20, device=device)
+mtcnn = MTCNN(image_size=160, margin=0, device=device)
 model = InceptionResnetV1(pretrained='vggface2').eval().to(device)
 
-def load_known_embeddings():
-    if not os.path.exists('data/attendance1.db'):
-        print("[ERROR] Database file 'data/attendance1.db' not found.")
-        return np.array([]), [], []
+os.makedirs("data", exist_ok=True)
+conn = sqlite3.connect("data/attendance1.db", check_same_thread=False)
+c = conn.cursor()
 
-    conn = sqlite3.connect('data/attendance1.db')
-    c = conn.cursor()
+c.execute("""
+CREATE TABLE IF NOT EXISTS attendance(
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ reg_no TEXT,
+ name TEXT,
+ status TEXT,
+ date TEXT,
+ time TEXT
+)
+""")
+conn.commit()
+
+def load_faces():
     c.execute("SELECT name, reg_no, embedding FROM faces")
-    data = c.fetchall()
-    conn.close()
+    rows = c.fetchall()
 
-    known_embeddings = []
-    known_names = []
-    known_regs = []
+    names, regs, embs = [], [], []
 
-    for name, reg_no, embedding_blob in data:
-        embedding = np.frombuffer(embedding_blob, dtype=np.float32)
-        known_embeddings.append(embedding)
-        known_names.append(name)
-        known_regs.append(reg_no)
+    for n, r, e in rows:
+        names.append(n)
+        regs.append(r)
+        embs.append(np.frombuffer(e, dtype=np.float32))
 
-    return np.array(known_embeddings), known_names, known_regs
+    return names, regs, np.array(embs) if embs else np.array([])
 
-known_embeddings, known_names, known_regs = load_known_embeddings()
+known_names, known_regs, known_embs = load_faces()
 
-app = Flask(__name__, static_folder='.', static_url_path='')
-CORS(app)
+def process(mark_type):
 
-@app.route('/')
-def home():
-    return send_from_directory(app.static_folder, 'in_cam.html')
+    global known_names, known_regs, known_embs
+    known_names, known_regs, known_embs = load_faces()
 
-@app.route('/in_cam.html')
-def serve_in_cam():
-    return send_from_directory(app.static_folder, 'in_cam.html')
+    if len(known_embs) == 0:
+        return {"status":"error","message":"No registered faces found"}
 
-@app.route('/out_cam.html')
-def serve_out_cam():
-    return send_from_directory(app.static_folder, 'out_cam.html')
+    if "image" not in request.files:
+        return {"status":"error","message":"No image received"}
 
-def process_face_and_return_data(image_file):
-    try:
-        image_data = image_file.read()
-        image_np = np.frombuffer(image_data, np.uint8)
-        frame = cv2.imdecode(image_np, cv2.IMREAD_COLOR)
+    challenge = request.form.get("challenge","")
 
-        img = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        boxes, _ = mtcnn.detect(img)
+    if challenge == "":
+        return {"status":"error","message":"Get challenge first"}
 
-        recognized_reg_no = "N/A"
-        recognized_name = "Unknown"
-        box_coords = None
-        box_color = 'red'
+    # read image
+    npimg = np.frombuffer(request.files["image"].read(), np.uint8)
+    frame = cv2.imdecode(npimg, 1)
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-        if boxes is not None and len(boxes) > 0:
-            box_coords = boxes[0].tolist()
+    # detect
+    face = mtcnn(rgb)
+    if face is None:
+        return {"status":"no_face","message":"Face not detected"}
 
-            face = mtcnn(img)
-            if face is not None:
-                face_embedding = model(face.unsqueeze(0).to(device)).detach().cpu().numpy()
+    with torch.no_grad():
+        emb = model(face.unsqueeze(0).to(device)).cpu().numpy()
 
-                if len(known_embeddings) > 0:
-                    similarities = cosine_similarity(face_embedding, known_embeddings)[0]
-                    best_match_idx = np.argmax(similarities)
+    emb = emb / np.linalg.norm(emb)
+    db = known_embs / np.linalg.norm(known_embs, axis=1, keepdims=True)
 
-                    if similarities[best_match_idx] > 0.7:
-                        recognized_name = known_names[best_match_idx]
-                        recognized_reg_no = known_regs[best_match_idx]
-                        box_color = 'green'
+    sims = np.dot(db, emb.squeeze())
+    idx = int(np.argmax(sims))
+    score = float(sims[idx])
 
-        return {
-            "reg_no": recognized_reg_no,
-            "name": recognized_name,
-            "box_coords": box_coords,
-            "box_color": box_color
-        }
-    except Exception as e:
-        print(f"Error processing image: {e}")
-        return None
+    if score < 0.55:
+        return {"status":"unknown","message":"Face not recognized"}
 
-@app.route('/mark_in', methods=['POST'])
+    name = known_names[idx]
+    reg = known_regs[idx]
+
+    now = datetime.now()
+    d = now.strftime("%Y-%m-%d")
+    t = now.strftime("%H:%M:%S")
+
+    c.execute("SELECT * FROM attendance WHERE reg_no=? AND date=? AND status=?", (reg, d, mark_type))
+
+    if c.fetchone():
+        return {"status":"already","message":f"{mark_type} already done today"}
+
+    # accept challenge (simple version)
+    print("Challenge completed:", challenge)
+
+    c.execute("INSERT INTO attendance (reg_no,name,status,date,time) VALUES (?,?,?,?,?)",
+              (reg,name,mark_type,d,t))
+    conn.commit()
+
+    return {"status":"marked","message":f"{mark_type} marked for {name}"}
+
+@app.route("/")
+def in_page():
+    return render_template("in_cam.html")
+
+@app.route("/out")
+def out_page():
+    return render_template("out_cam.html")
+
+@app.route("/mark_in", methods=["POST"])
 def mark_in():
-    data = process_face_and_return_data(request.files['image'])
-    if data is None or data['box_color'] == 'red':
-        message = "Face not recognized."
-        result = {
-            "status": "success",
-            "message": message,
-            "recognized_id": data['reg_no'] if data else "N/A",
-            "box_coords": data['box_coords'] if data else None,
-            "box_color": 'red'
-        }
-        return result
+    return jsonify(process("IN"))
 
-    conn = sqlite3.connect('data/attendance1.db')
-    c = conn.cursor()
-    date_str = datetime.now().strftime("%Y-%m-%d")
-    time_str = datetime.now().strftime("%H:%M:%S")
-
-    c.execute("SELECT type FROM attendance WHERE reg_no = ? AND date = ? ORDER BY time DESC LIMIT 1", (data['reg_no'], date_str))
-    last_record = c.fetchone()
-
-    if not last_record or last_record[0] == 'out':
-        c.execute("INSERT INTO attendance (reg_no, name, type, time, date) VALUES (?, ?, ?, ?, ?)",
-                  (data['reg_no'], data['name'], 'in', time_str, date_str))
-        conn.commit()
-        message = f"IN attendance marked for {data['reg_no']}."
-        print(f"[INFO] IN attendance marked for {data['reg_no']}.")
-    else:
-        message = f"{data['reg_no']} has not checked out yet."
-        data['box_color'] = 'red'
-        print(f"[INFO] {data['reg_no']} has not checked out yet.")
-    
-    conn.close()
-    
-    result = {
-        "status": "success",
-        "message": message,
-        "recognized_id": data['reg_no'],
-        "box_coords": data['box_coords'],
-        "box_color": data['box_color']
-    }
-    return result
-
-@app.route('/mark_out', methods=['POST'])
+@app.route("/mark_out", methods=["POST"])
 def mark_out():
-    data = process_face_and_return_data(request.files['image'])
-    if data is None or data['box_color'] == 'red':
-        message = "Face not recognized."
-        result = {
-            "status": "success",
-            "message": message,
-            "recognized_id": data['reg_no'] if data else "N/A",
-            "box_coords": data['box_coords'] if data else None,
-            "box_color": 'red'
-        }
-        return result
+    return jsonify(process("OUT"))
 
-    conn = sqlite3.connect('data/attendance1.db')
-    c = conn.cursor()
-    date_str = datetime.now().strftime("%Y-%m-%d")
-    time_str = datetime.now().strftime("%H:%M:%S")
-
-    c.execute("SELECT type FROM attendance WHERE reg_no = ? AND date = ? ORDER BY time DESC LIMIT 1", (data['reg_no'], date_str))
-    last_record = c.fetchone()
-    
-    if last_record and last_record[0] == 'in':
-        c.execute("INSERT INTO attendance (reg_no, name, type, time, date) VALUES (?, ?, ?, ?, ?)",
-                  (data['reg_no'], data['name'], 'out', time_str, date_str))
-        conn.commit()
-        message = f"OUT attendance marked for {data['reg_no']}."
-        print(f"[INFO] OUT attendance marked for {data['reg_no']}.")
-    else:
-        message = f"{data['reg_no']} has not checked in."
-        data['box_color'] = 'red'
-        print(f"[INFO] {data['reg_no']} has not checked in.")
-    
-    conn.close()
-
-    result = {
-        "status": "success",
-        "message": message,
-        "recognized_id": data['reg_no'],
-        "box_coords": data['box_coords'],
-        "box_color": data['box_color']
-    }
-    return result
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     app.run(debug=True)
