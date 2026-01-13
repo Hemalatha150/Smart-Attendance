@@ -1,4 +1,4 @@
-from flask import Flask, render_template, redirect, request, url_for, jsonify, session
+from flask import Flask, render_template, redirect, request, url_for, jsonify, session, send_file
 import subprocess
 import sys
 import os
@@ -10,6 +10,8 @@ import sqlite3
 from PIL import Image
 from datetime import datetime
 from facenet_pytorch import MTCNN, InceptionResnetV1
+import pandas as pd
+from io import BytesIO
 
 app = Flask(__name__)
 app.secret_key = "attendance_secret_key"
@@ -602,6 +604,10 @@ def get_student_for_edit(reg_no):
         print(f"Server Error: {e}") # ఇది మీ టెర్మినల్ లో కనిపిస్తుంది
         return jsonify({"success": False, "message": str(e)})
 
+# ==========================
+# 8) CLEAR ATTENDANCE LOG
+# ==========================
+#ee route kavalante remove cheseyochu
 @app.route('/api/clear_attendance')
 def clear_attendance():
     if session.get('role') != 'faculty':
@@ -615,6 +621,77 @@ def clear_attendance():
         return "Attendance Log Cleared Successfully! Now go back and remark."
     except Exception as e:
         return str(e)
+
+
+# ==========================
+# 8) DOWNLOAD REPORT AS EXCEL
+# ==========================
+
+@app.route('/download_report')
+def download_report():
+    if session.get('role') != 'faculty':
+        return redirect(url_for('login_page'))
+    
+    # 1. ఫిల్టర్ పారామీటర్లను తీసుకోవడం
+    f_year = request.args.get('year', '1').strip()
+    f_branch = request.args.get('branch', '').upper().strip()
+    f_section = request.args.get('section', '').upper().strip()
+    f_subject = request.args.get('subject', '').strip()
+    f_period = request.args.get('period', '').strip()
+    selected_date = request.args.get('date', datetime.now().strftime('%Y-%m-%d'))
+    
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    
+    # 2. రిపోర్ట్ డేటా జనరేట్ చేయడం (ఇది లేకపోవడం వల్లే మీకు ఎర్రర్ వచ్చింది)
+    cursor.execute("SELECT reg_no, name FROM faces WHERE year=? AND branch=? AND section=?", (f_year, f_branch, f_section))
+    students = cursor.fetchall()
+    
+    cursor.execute("SELECT reg_no, status, time, subject FROM attendance WHERE date = ?", (selected_date,))
+    raw_attendance = cursor.fetchall()
+
+    attendance_map = {}
+    for reg_no, status, at_time, db_subject in raw_attendance:
+        r_no = reg_no.upper().strip()
+        if f_subject.lower() not in db_subject.lower(): continue
+        if f_period and f_period not in db_subject: continue
+            
+        if r_no not in attendance_map:
+            attendance_map[r_no] = {'in_time': '-', 'out_time': '-'}
+        
+        st_clean = str(status).strip().upper()
+        if st_clean == 'IN': attendance_map[r_no]['in_time'] = at_time
+        elif st_clean == 'OUT': attendance_map[r_no]['out_time'] = at_time
+
+    # Excel కోసం డేటా లిస్ట్ తయారు చేయడం
+    excel_data = []
+    for reg_no, name in students:
+        r_no = reg_no.upper().strip()
+        times = attendance_map.get(r_no, {'in_time': '-', 'out_time': '-'})
+        
+        excel_data.append({
+            'Roll No': reg_no,
+            'Student Name': name,
+            'Subject': f"{f_subject} ({f_period})",
+            'Status': "Present" if times['in_time'] != '-' and times['out_time'] != '-' else "Absent",
+            'IN Time': times['in_time'],
+            'OUT Time': times['out_time'],
+            'Date': selected_date
+        })
+    conn.close()
+
+    # 3. Pandas ద్వారా Excel క్రియేట్ చేయడం
+    df = pd.DataFrame(excel_data)
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Attendance')
+    
+    output.seek(0)
+    filename = f"Attendance_{f_subject}_{selected_date}.xlsx"
+    
+    return send_file(output, as_attachment=True, download_name=filename, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                     )
+
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
