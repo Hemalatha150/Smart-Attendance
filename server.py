@@ -35,6 +35,43 @@ model = InceptionResnetV1(pretrained='vggface2').eval().to(device)
 
 temp_embeddings = {}
 
+conn = sqlite3.connect(DB_PATH)
+cursor = conn.cursor()
+cursor.execute('''
+    CREATE TABLE IF NOT EXISTS attendance (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        reg_no TEXT,
+        name TEXT,
+        branch TEXT,    
+        section TEXT,   
+        year TEXT,      
+        subject TEXT,   
+        date TEXT,
+        time TEXT,
+        status TEXT
+    )
+''')
+conn.commit()
+conn.close()
+
+# Server memory lo status maintain cheyyadaniki
+attendance_status = {
+    "is_in_active": False,
+    "is_out_active": False
+}
+
+@app.route('/api/toggle_attendance/<mode>/<action>')
+def toggle_attendance(mode, action):
+    if session.get('role') != 'faculty':
+        return jsonify({"success": False, "message": "Unauthorized"}), 403
+    
+    is_active = (action == 'start')
+    if mode == 'IN':
+        attendance_status["is_in_active"] = is_active
+    elif mode == 'OUT':
+        attendance_status["is_out_active"] = is_active
+        
+    return jsonify({"success": True, "status": is_active})
 # ==========================
 # 2) WEB ROUTES
 # ==========================
@@ -45,13 +82,15 @@ def home():
 
 @app.route("/secure_in")
 def secure_in():
-    subprocess.Popen([PYTHON_EXE, os.path.join(BASE_DIR, "main.py"), "IN"], cwd=BASE_DIR)
-    return redirect(url_for('home'))
+    if session.get('role') != 'faculty':
+        return redirect(url_for('login_page'))
+    return render_template("secure_in.html")
 
 @app.route("/secure_out")
 def secure_out():
-    subprocess.Popen([PYTHON_EXE, os.path.join(BASE_DIR, "main.py"), "OUT"], cwd=BASE_DIR)
-    return redirect(url_for('home'))
+    if session.get('role') != 'faculty':
+        return redirect(url_for('login_page'))
+    return render_template("secure_out.html")
 
 @app.route('/register')
 def register_page():
@@ -324,6 +363,78 @@ def student_login():
 
 
 # ==========================
+# 8) ATTENDANCE MARKING LOGIC
+# ==========================
+
+@app.route('/api/mark_attendance', methods=['POST'])
+def mark_attendance():
+    try:
+        data = request.json
+        mode = data.get('mode')
+        subj_name = data.get('subject', 'General').strip()
+        period = data.get('period', 'P1-P2') # Dropdown nundi vacchina period
+        
+        # Subject and Period ni combine chesthunnam (e.g., "Python (P1-P2)")
+        subj = f"{subj_name} ({period})" 
+        
+        f_year = data.get('year')
+        f_branch = data.get('branch')
+        f_section = data.get('section')
+
+        if mode == 'IN' and not attendance_status["is_in_active"]:
+            return jsonify({"success": False, "message": "Session not active"})
+
+        img_base64 = data.get('image').split(',')[1]
+        img_bytes = base64.b64decode(img_base64)
+        nparr = np.frombuffer(img_bytes, np.uint8)
+        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        pil_img = Image.fromarray(rgb).convert('RGB')
+
+        boxes, _ = mtcnn.detect(pil_img)
+        if boxes is not None:
+            face_tensor = mtcnn(pil_img)
+            if face_tensor is not None:
+                with torch.no_grad():
+                    new_emb = model(face_tensor.unsqueeze(0).to(device)).cpu().numpy().flatten()
+                
+                conn = sqlite3.connect(DB_PATH)
+                cursor = conn.cursor()
+                
+                cursor.execute("SELECT reg_no, name, branch, section, year, embedding FROM faces WHERE year=? AND branch=? AND section=?", 
+                               (f_year, f_branch, f_section))
+                rows = cursor.fetchall()
+                
+                for reg_no, name, branch, section, year, emb_blob in rows:
+                    ex_emb = np.frombuffer(emb_blob, dtype=np.float32)
+                    dist = np.linalg.norm(new_emb - ex_emb)
+                    
+                    if dist < 0.6:
+                        date_str = datetime.now().strftime("%Y-%m-%d")
+                        
+                        # Check duplicate using Subject + Period combination
+                        cursor.execute("SELECT id FROM attendance WHERE reg_no=? AND date=? AND status=? AND subject=?", 
+                                       (reg_no, date_str, mode, subj))
+                        if cursor.fetchone():
+                            conn.close()
+                            return jsonify({"success": False, "message": f"Already Marked for {subj}"})
+
+                        time_str = datetime.now().strftime("%H:%M:%S")
+                        cursor.execute("""
+                            INSERT INTO attendance (reg_no, name, branch, section, year, subject, date, time, status) 
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (reg_no, name, branch, section, year, subj, date_str, time_str, mode))
+                        conn.commit()
+                        conn.close()
+                        return jsonify({"success": True, "name": name, "reg_no": reg_no})
+                
+                conn.close()
+                return jsonify({"success": False, "message": "Face not recognized"})
+        return jsonify({"success": False, "message": "No face detected"})
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)})
+
+# ==========================
 # 5) MANAGE STUDENTS
 # ==========================
 @app.route('/manage_students')
@@ -358,54 +469,51 @@ def api_delete_student(reg_no):
 # ==========================
 # 6) ATTENDANCE REPORTS
 # ==========================
+
 @app.route('/attendance_reports')
 def attendance_reports():
     if session.get('role') != 'faculty':
         return redirect(url_for('login_page'))
     
+    f_year = request.args.get('year', '1')
+    f_branch = request.args.get('branch', '').upper()
+    f_section = request.args.get('section', '').upper()
+    f_subject = request.args.get('subject', '').strip()
+    f_period = request.args.get('period', '').strip() # Kothha Period filter
     selected_date = request.args.get('date', datetime.now().strftime('%Y-%m-%d'))
-    f_branch = request.args.get('branch', 'All')
-    f_section = request.args.get('section', 'All')
-    f_year = request.args.get('year', 'All')
     
+    # Subject and Period ni combine chesi vethukuthunnam
+    search_subj = f"{f_subject} ({f_period})" if f_subject and f_period else f"{f_subject}%"
+
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
-    # Present List with Filters
-    query_present = """
-        SELECT a.reg_no, f.name, f.branch, f.section, a.time, f.year
-        FROM attendance a
-        JOIN faces f ON a.reg_no = f.reg_no
-        WHERE a.date = ? AND a.status = 'IN'
-    """
-    params = [selected_date]
-    if f_branch != 'All': query_present += " AND f.branch = ?"; params.append(f_branch)
-    if f_section != 'All': query_present += " AND f.section = ?"; params.append(f_section)
-    if f_year != 'All': query_present += " AND f.year = ?"; params.append(f_year)
-        
-    cursor.execute(query_present, params)
-    present_list = cursor.fetchall()
-    present_ids = [p[0] for p in present_list]
+    # Students list
+    cursor.execute("SELECT reg_no, name, year, branch, section FROM faces WHERE year=? AND branch=? AND section=?", (f_year, f_branch, f_section))
+    filtered_students = cursor.fetchall()
     
-    # Absent List with Filters
-    query_absent = "SELECT reg_no, name, branch, section, phone, year FROM faces WHERE 1=1"
-    abs_params = []
-    if f_branch != 'All': query_absent += " AND branch = ?"; abs_params.append(f_branch)
-    if f_section != 'All': query_absent += " AND section = ?"; abs_params.append(f_section)
-    if f_year != 'All': query_absent += " AND year = ?"; abs_params.append(f_year)
+    # Attendance matching
+    cursor.execute("SELECT reg_no, time, subject FROM attendance WHERE date=? AND subject LIKE ?", (selected_date, search_subj))
+    attendance_records = {row[0]: {'time': row[1], 'subject': row[2]} for row in cursor.fetchall()}
+    
+    final_report = []
+    p_count, a_count = 0, 0
+    
+    for student in filtered_students:
+        reg_no, name, year, branch, section = student
+        if reg_no in attendance_records:
+            status, time, subj = "Present", attendance_records[reg_no]['time'], attendance_records[reg_no]['subject']
+            p_count += 1
+        else:
+            status, time, subj = "Absent", "-", f"{f_subject} ({f_period})" if f_subject else "N/A"
+            a_count += 1
         
-    cursor.execute(query_absent, abs_params)
-    all_filtered = cursor.fetchall()
-    absent_list = [s for s in all_filtered if s[0] not in present_ids]
+        final_report.append({'reg_no': reg_no, 'name': name, 'year': year, 'branch': branch, 'section': section, 'subject': subj, 'status': status, 'time': time})
     
     conn.close()
-    return render_template('reports.html', 
-                           present=present_list, 
-                           absent=absent_list, 
-                           date=selected_date,
-                           f_branch=f_branch,
-                           f_section=f_section,
-                           f_year=f_year)
+    return render_template('reports.html', report=final_report, present_count=p_count, absent_count=a_count, 
+                           f_year=f_year, f_branch=f_branch, f_section=f_section, f_subject=f_subject, f_period=f_period, date=selected_date
+                           )
 
 # ==========================
 # 7) UPDATE STUDENT INFO
@@ -469,6 +577,7 @@ def get_student_for_edit(reg_no):
     except Exception as e:
         print(f"Server Error: {e}") # ఇది మీ టెర్మినల్ లో కనిపిస్తుంది
         return jsonify({"success": False, "message": str(e)})
+
 
 
 if __name__ == "__main__":
