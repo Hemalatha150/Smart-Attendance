@@ -57,6 +57,7 @@
         <div class="sidebar-menu">
             <a href="/faculty_dashboard" class="menu-item"><i class="bi bi-columns-gap"></i> Dashboard</a>
             <a href="/register" class="menu-item active"><i class="bi bi-person-plus"></i> Student Registration</a>
+            <a href="/edit_student_search" class="menu-item"><i class="bi bi-pencil-square"></i> Edit Student Profile</a>
             <a href="/secure_in" class="menu-item"><i class="bi bi-camera-video"></i> Start Entry (IN)</a>
             <a href="/secure_out" class="menu-item"><i class="bi bi-door-open"></i> Start Exit (OUT)</a>
             <a href="/attendance_reports" class="menu-item"><i class="bi bi-file-earmark-bar-graph"></i> Attendance Reports</a>
@@ -84,8 +85,11 @@
     <input type="text" id="phone" placeholder="10 Digit No" maxlength="10">
 </div>                </div>
                 <div class="form-row">
-                    <div class="input-group"><label>Registration Number</label><input type="text" id="reg_no" placeholder="Ex: 23B91A1261" oninput="this.value = this.value.toUpperCase(); syncPassword();"></div>
-                    <div class="input-group"><label>Password</label><input type="text" id="password" readonly style="background: #f1f3f4; color: #5f6368;"></div>
+<div class="input-group">
+    <label>Registration Number <span style="color:red;">*</span></label>
+    <input type="text" id="reg_no" placeholder="e.g. 21B01A0501" maxlength="10" oninput="syncPassword()" style="text-transform: uppercase;">
+</div>                   
+ <div class="input-group"><label>Password</label><input type="text" id="password" readonly style="background: #f1f3f4; color: #5f6368;"></div>
                 </div>
                 <div class="input-group">
     <label><i class="bi bi-calendar-event"></i> Year</label>
@@ -139,6 +143,12 @@
     if (!name || !reg_no || !phone || !year) { 
         showError("Name, Reg No, Phone, and Year are all required!"); 
         return; 
+    }
+
+    // --- కొత్త కండిషన్: Reg No కచ్చితంగా 10 అక్షరాలు ఉండాలి ---
+    if (reg_no.length !== 10) {
+        showError("Registration Number must be exactly 10 characters long!");
+        return;
     }
 
     // ఫోన్ నంబర్ 10 అంకెలు ఉందో లేదో చెక్ చేయడం (Optional but good)

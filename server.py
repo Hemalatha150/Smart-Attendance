@@ -138,11 +138,15 @@ def process_web_pose():
     try:
         data = request.json
         name = data.get('name')
-        reg_no = data.get('reg_no').upper()
+        reg_no = data.get('reg_no', '').strip().upper()
         year = data.get('year')
         expected_pose = data.get('pose')
         img_base64 = data.get('image').split(',')[1]
         
+        # Reg No పొడవు చెక్ చేయడం
+        if len(reg_no) != 10:
+           return jsonify({"success": False, "message": "Invalid Registration Number. Must be 10 characters."})
+    
         img_bytes = base64.b64decode(img_base64)
         nparr = np.frombuffer(img_bytes, np.uint8)
         frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
@@ -402,6 +406,70 @@ def attendance_reports():
                            f_branch=f_branch,
                            f_section=f_section,
                            f_year=f_year)
+
+# ==========================
+# 7) UPDATE STUDENT INFO
+# ==========================
+@app.route('/api/update_student', methods=['POST'])  #ee route only faculty edit cheyyadaniki like student name,register number, year,branch,section,phone
+def api_update_student():
+    if session.get('role') != 'faculty':
+        return jsonify({"success": False, "message": "Unauthorized"}), 403
+    
+    try:
+        data = request.json
+        reg_no = data.get('reg_no')
+        name = data.get('name')
+        branch = data.get('branch')
+        section = data.get('section')
+        phone = data.get('phone')
+        year = data.get('year')
+
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE faces 
+            SET name=?, branch=?, section=?, phone=?, year=?
+            WHERE reg_no=?
+        """, (name, branch, section, phone, year, reg_no))
+        
+        conn.commit()
+        conn.close()
+        return jsonify({"success": True, "message": "Student updated successfully"})
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)})
+    
+
+@app.route('/edit_student_search')
+def edit_student_search():
+    if session.get('role') != 'faculty': return redirect(url_for('login_page'))
+    return render_template('edit_student_profile.html')
+
+@app.route('/api/get_student_for_edit/<reg_no>')
+def get_student_for_edit(reg_no):
+    if session.get('role') != 'faculty':
+        return jsonify({"success": False, "message": "Unauthorized"}), 403
+    
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        # ఇక్కడ మీ టేబుల్ లో కాలమ్స్ ఆర్డర్ కరెక్ట్ గా ఉందో లేదో చూడండి
+        cursor.execute("SELECT reg_no, name, branch, section, phone, year FROM faces WHERE reg_no = ?", (reg_no.upper(),))
+        row = cursor.fetchone()
+        conn.close()
+        
+        if row:
+            return jsonify({
+                "success": True, 
+                "data": {
+                    "reg_no": row[0], "name": row[1], "branch": row[2],
+                    "section": row[3], "phone": row[4], "year": row[5]
+                }
+            })
+        return jsonify({"success": False, "message": "Student Not Found"})
+    except Exception as e:
+        print(f"Server Error: {e}") # ఇది మీ టెర్మినల్ లో కనిపిస్తుంది
+        return jsonify({"success": False, "message": str(e)})
+
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
