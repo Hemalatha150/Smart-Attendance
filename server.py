@@ -28,7 +28,7 @@ mtcnn = MTCNN(
     image_size=160, 
     margin=14, 
     keep_all=False, 
-    thresholds=[0.5, 0.6, 0.6], 
+    thresholds=[0.35, 0.5, 0.5], 
     device=device
 )
 model = InceptionResnetV1(pretrained='vggface2').eval().to(device)
@@ -67,6 +67,13 @@ def register_page():
 def check_id():
     data = request.json
     reg_no = data.get('reg_no', '').upper()
+
+    # --- కొత్తగా ఈ లైన్ యాడ్ చేయండి ---
+    # కొత్త రిజిస్ట్రేషన్ మొదలవుతుంది కాబట్టి పాత మెమరీని క్లియర్ చేస్తున్నాం
+    if reg_no in temp_embeddings:
+        del temp_embeddings[reg_no]
+        print(f"Cleared temporary memory for {reg_no}")
+
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("SELECT name FROM faces WHERE reg_no = ?", (reg_no,))
@@ -80,50 +87,59 @@ def check_id():
 # ==========================
 # POSE DETECTION LOGIC
 # ==========================
+@app.route('/api/clear_temp_registration', methods=['POST'])
+def clear_temp_registration():
+    data = request.json
+    reg_no = data.get('reg_no', '').upper()
+    if reg_no in temp_embeddings:
+        del temp_embeddings[reg_no]
+        print(f"Tab switched/closed: Cleared memory for {reg_no}")
+    return jsonify({"success": True})
+
+
 def verify_pose(landmarks, expected_pose):
     if landmarks is None or len(landmarks) == 0:
         return False, "Face not clear"
         
     lm = landmarks[0] 
-    # lm[0]=left_eye, lm[1]=right_eye, lm[2]=nose, lm[3]=mouth_left, lm[4]=mouth_right
+    nose_y = lm[2][1]
+    left_eye_y = lm[0][1]
+    right_eye_y = lm[1][1]
     
-    nose_x, nose_y = lm[2][0], lm[2][1]
-    left_eye_x, left_eye_y = lm[0][0], lm[0][1]
-    right_eye_x, right_eye_y = lm[1][0], lm[1][1]
-    
-    eye_dist = right_eye_x - left_eye_x
-    if eye_dist == 0: return False, "Face too far or not clear"
-    
-    # Horizontal ratio (Left/Right)
-    # ముక్కు ఎడమ కంటికి, కుడి కంటికి మధ్య ఎక్కడ ఉందో లెక్కిస్తుంది
-    ratio_h = (nose_x - left_eye_x) / eye_dist
-    
-    detected = "Look Straight"
-    if ratio_h < 0.38: 
-        detected = "Turn Face Right"
-    elif ratio_h > 0.62: 
-        detected = "Turn Face Left"
-    
-    # Vertical Check (Up/Down)
-    # కళ్ళు మరియు ముక్కు మధ్య ఉండే నిలువు దూరాన్ని బట్టి
+    # కళ్ళు మరియు ముక్కు మధ్య ఉండే యావరేజ్ దూరం
     eye_y_avg = (left_eye_y + right_eye_y) / 2
+    
+    # హారిజాంటల్ దూరం (Eye to Eye distance)
+    eye_dist = lm[1][0] - lm[0][0]
+    
+    # నిలువు దూరం (Vertical difference)
     vertical_diff = nose_y - eye_y_avg
     
-    if vertical_diff < eye_dist * 0.45: 
-        detected = "Look Up"
-    elif vertical_diff > eye_dist * 0.75: 
+    # హారిజాంటల్ రేషియో (Left/Right కోసం)
+    ratio_h = (lm[2][0] - lm[0][0]) / eye_dist
+    
+    detected = "Look Straight"
+
+    # --- Look Down కి ప్రాధాన్యత ఇస్తున్నాం ---
+    # కిందికి వంగినప్పుడు vertical_diff పెరుగుతుంది
+    if vertical_diff > eye_dist * 0.58: # 0.75 నుండి 0.58 కి తగ్గించాను
         detected = "Look Down"
+    elif vertical_diff < eye_dist * 0.38: 
+        detected = "Look Up"
+    elif ratio_h < 0.40:
+        detected = "Turn Face Right"
+    elif ratio_h > 0.60:
+        detected = "Turn Face Left"
 
     return (detected == expected_pose), detected
-
 
 @app.route('/api/process_web_pose', methods=['POST'])
 def process_web_pose():
     try:
         data = request.json
-        name, reg_no = data.get('name'), data.get('reg_no').upper()
-        # year ఫీల్డ్‌ని ఇక్కడ capture చేస్తున్నాం
-        year = data.get('year') 
+        name = data.get('name')
+        reg_no = data.get('reg_no').upper()
+        year = data.get('year')
         expected_pose = data.get('pose')
         img_base64 = data.get('image').split(',')[1]
         
@@ -133,50 +149,67 @@ def process_web_pose():
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         pil_img = Image.fromarray(rgb).convert('RGB')
 
-        # Detect face and landmarks
         boxes, probs, landmarks = mtcnn.detect(pil_img, landmarks=True)
         
         if boxes is not None:
-            # Step 1: Pose Validation
+            # 1. Pose Validation
             is_correct, detected = verify_pose(landmarks, expected_pose)
             if not is_correct:
                 return jsonify({"success": False, "message": f"Wrong Pose! Please {expected_pose}"})
 
-            # Step 2: Get Embedding
+            # 2. Get Embedding
             face_tensor = mtcnn(pil_img)
             if face_tensor is not None:
                 with torch.no_grad():
                     emb = model(face_tensor.unsqueeze(0).to(device)).cpu().numpy().flatten()
                 
-                if reg_no not in temp_embeddings: temp_embeddings[reg_no] = []
+                if reg_no not in temp_embeddings:
+                    temp_embeddings[reg_no] = []
+                
                 temp_embeddings[reg_no].append(emb)
                 
+                # --- ముఖ్యమైన మార్పు: మొదటి పోజ్ లోనే డూప్లికేట్ చెక్ ---
+                if len(temp_embeddings[reg_no]) == 1:
+                    conn = sqlite3.connect(DB_PATH)
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT reg_no, name, embedding FROM faces")
+                    rows = cursor.fetchall()
+                    
+                    for ex_reg, ex_name, ex_emb_blob in rows:
+                        if ex_emb_blob:
+                            ex_emb = np.frombuffer(ex_emb_blob, dtype=np.float32)
+                            dist = np.linalg.norm(emb - ex_emb)
+                            
+                            # ఒకవేళ ఫేస్ మ్యాచ్ అయితే (Distance < 0.6)
+                            if dist < 0.7:
+                                conn.close()
+                                del temp_embeddings[reg_no] # మెమరీ క్లియర్
+                                return jsonify({
+                                    "success": False, 
+                                    "is_duplicate": True, 
+                                    "message": f"Face already registered as {ex_name} ({ex_reg})"
+                                })
+                    conn.close()
+
+                # --- 5 పోజులు పూర్తయ్యాక సేవ్ చేయడం ---
                 if len(temp_embeddings[reg_no]) >= 5:
                     avg_emb = np.mean(temp_embeddings[reg_no], axis=0).astype(np.float32)
                     conn = sqlite3.connect(DB_PATH)
                     cursor = conn.cursor()
-                    
-                    # De-duplication Check
-                    cursor.execute("SELECT reg_no, name, embedding FROM faces")
-                    for ex_reg, ex_name, ex_emb_blob in cursor.fetchall():
-                        ex_emb = np.frombuffer(ex_emb_blob, dtype=np.float32)
-                        if np.linalg.norm(avg_emb - ex_emb) < 0.6:
-                            conn.close(); del temp_embeddings[reg_no]
-                            return jsonify({"success": False, "message": f"Face already registered as {ex_name}"})
-
-                    # Insert Query లో 'year' కాలమ్‌ని యాడ్ చేశాను
                     cursor.execute("""
                         INSERT INTO faces (reg_no, name, phone, branch, section, year, embedding) 
                         VALUES (?, ?, ?, ?, ?, ?, ?)
                     """, (reg_no, name, data.get('phone'), data.get('branch'), data.get('section'), year, avg_emb.tobytes()))
-                    
-                    conn.commit(); conn.close(); del temp_embeddings[reg_no]
+                    conn.commit()
+                    conn.close()
+                    del temp_embeddings[reg_no]
                     return jsonify({"success": True, "completed": True})
                 
                 return jsonify({"success": True, "completed": False})
         
         return jsonify({"success": False, "message": "Face not detected clearly"})
     except Exception as e:
+        print(f"Error in process_web_pose: {e}")
         return jsonify({"success": False, "message": str(e)})
 
 # ==========================

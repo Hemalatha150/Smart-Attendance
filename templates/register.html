@@ -79,8 +79,10 @@
                 <div id="error-card" class="error-card"></div>
                 <div class="form-row">
                     <div class="input-group"><label>Full Name</label><input type="text" id="name" placeholder="Full Name"></div>
-                    <div class="input-group"><label>Phone Number</label><input type="text" id="phone" placeholder="10 Digit No"></div>
-                </div>
+<div class="input-group">
+    <label>Phone Number <span style="color:red;">*</span></label>
+    <input type="text" id="phone" placeholder="10 Digit No" maxlength="10">
+</div>                </div>
                 <div class="form-row">
                     <div class="input-group"><label>Registration Number</label><input type="text" id="reg_no" placeholder="Ex: 23B91A1261" oninput="this.value = this.value.toUpperCase(); syncPassword();"></div>
                     <div class="input-group"><label>Password</label><input type="text" id="password" readonly style="background: #f1f3f4; color: #5f6368;"></div>
@@ -130,11 +132,20 @@
         async function validateAndOpenCamera() {
             const name = document.getElementById('name').value;
             const reg_no = document.getElementById('reg_no').value;
+            const phone = document.getElementById('phone').value;
             const year = document.querySelector('select[name="year"]').value;
-            if(!name || !reg_no || !year) { 
-               showError("Error: Name, Reg No, and Year are required!"); 
-                return; 
-             }
+            
+            // అన్ని ఫీల్డ్స్ ని చెక్ చేయడం (Phone Number తో సహా)
+    if (!name || !reg_no || !phone || !year) { 
+        showError("Name, Reg No, Phone, and Year are all required!"); 
+        return; 
+    }
+
+    // ఫోన్ నంబర్ 10 అంకెలు ఉందో లేదో చెక్ చేయడం (Optional but good)
+    if (phone.length !== 10 || isNaN(phone)) {
+        showError(" Please enter a valid 10-digit Phone Number!");
+        return;
+    }
              
             try {
                 const check = await fetch('/api/check_id', {
@@ -162,6 +173,7 @@
             } catch (err) { alert("Camera access denied!"); closeCamera(); }
         }
 
+       
         async function captureFlow() {
     if (poseCount >= 5) return;
 
@@ -194,7 +206,7 @@
                 branch: document.getElementById('branch').value,
                 section: document.getElementById('section').value,
                 image: imageData,
-                pose: poses[poseCount] // పోజ్ వాలిడేషన్ కోసం
+                pose: poses[poseCount] 
             })
         });
 
@@ -203,38 +215,80 @@
         if (result.success) {
             poseCount++;
             let progressPercent = (poseCount / 5) * 100;
+
+            // Progress bar update
             progressFill.style.width = progressPercent + "%";
             statusEl.innerText = poseCount + "/5 Poses Captured";
 
             if (result.completed) {
-                alert("Success: Enrollment Completed Successfully!");
-                window.location.href = "/faculty_dashboard";
+                // Enrollment success handling
+                setTimeout(() => {
+                    alert("Success: Enrollment Completed Successfully!");
+                    window.location.href = "/faculty_dashboard";
+                }, 300); 
             } else {
+                // Next pose process
                 setTimeout(captureFlow, 1500); 
             }
         } else {
-            // పోజ్ తప్పు అయినా లేదా ఫేస్ కనపడకపోయినా ఎర్రర్ చూపిస్తుంది
-            instructionEl.innerHTML = `<span style="color:red;">${result.message}</span>`;
+            // --- Face-Duplication లేదా Pose Error హ్యాండ్లింగ్ ---
             
+            // 1. మొదటి పోజ్ అప్పుడే డూప్లికేట్ అని తేలితే (Early Detection)
+            if (result.is_duplicate) {
+                closeCamera(); // కెమెరా ఆపేయాలి
+                showError("Registration Failed: " + result.message); // ఎర్రర్ కార్డ్ చూపించాలి
+                alert(result.message); // పాప్-అప్ అలర్ట్
+                return; // ప్రాసెస్ ఇక్కడితో ఆగిపోతుంది
+            }
+
+            // 2. ఒకవేళ సాధారణ 'Already Registered' మెసేజ్ అయితే (Safety check)
             if (result.message.includes("Already Registered")) {
                 alert(result.message);
                 closeCamera();
                 window.location.reload();
-            } else {
-                // మళ్ళీ అదే పోజ్ కోసం ప్రయత్నిస్తుంది
-                setTimeout(captureFlow, 2000);
+                return;
             }
+
+            // 3. పోజ్ తప్పు అయితే (Wrong Pose)
+            instructionEl.innerHTML = `<span style="color:red;">${result.message}</span>`;
+            
+            // యూజర్ మళ్ళీ అదే పోజ్ సరిగ్గా ఇవ్వడానికి 2 సెకన్ల టైమ్
+            setTimeout(captureFlow, 2000);
         }
     } catch (e) {
         console.error("Error:", e);
         setTimeout(captureFlow, 2000);
     }
 }
-        
+
+
         function closeCamera() {
             if(stream) stream.getTracks().forEach(track => track.stop());
             document.getElementById('camera-overlay').style.display = 'none';
         }
+
+    // ట్యాబ్ మారినప్పుడు లేదా మినిమైజ్ చేసినప్పుడు గుర్తించడానికి
+document.addEventListener("visibilitychange", function() {
+    // ఒకవేళ యూజర్ ట్యాబ్ వదిలి వెళ్తే (hidden)
+    if (document.hidden) {
+        const reg_no = document.getElementById('reg_no').value;
+        
+        if (reg_no) {
+            // సర్వర్ లో మెమరీ క్లియర్ చేయడానికి రిక్వెస్ట్
+            fetch('/api/clear_temp_registration', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ reg_no: reg_no })
+            });
+
+            // ఒకవేళ కెమెరా ఆన్ లో ఉంటే ఆపేసి, పేజీని రీలోడ్ చేయడం
+            if (stream) {
+                alert("Tab switched! For security, registration has been reset.");
+                window.location.reload(); 
+            }
+        }
+    }
+ });
     </script>
 </body>
 </html>
