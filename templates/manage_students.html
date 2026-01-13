@@ -38,10 +38,12 @@
         td { padding: 15px; border-bottom: 1px solid #eee; color: var(--text-dark); font-size: 14px; }
         tr:hover { background: #fcfcfc; }
 
-        .btn-delete { color: #d93025; background: #fdecea; border: none; padding: 8px 12px; border-radius: 8px; cursor: pointer; transition: 0.2s; }
+        .btn-delete { color: #d93025; background: #fdecea; border: none; padding: 8px 12px; border-radius: 8px; cursor: pointer; transition: 0.2s; display: flex; align-items: center; gap: 5px; }
         .btn-delete:hover { background: #d93025; color: white; }
 
         .search-bar { width: 100%; max-width: 300px; padding: 10px 15px; border: 1px solid #ddd; border-radius: 8px; outline: none; margin-bottom: 20px; }
+        
+        .year-badge { background: #e8f0fe; color: var(--primary); padding: 4px 8px; border-radius: 6px; font-weight: 600; font-size: 12px; }
     </style>
 </head>
 <body>
@@ -67,7 +69,10 @@
         <div class="content-container">
             <div class="table-card">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                    <h2 style="margin: 0;">Registered Students</h2>
+                    <div>
+                        <h2 style="margin: 0;">Registered Students</h2>
+                        <p style="color: var(--text-light); margin: 5px 0; font-size: 14px;">Manage and monitor registered student records</p>
+                    </div>
                     <input type="text" id="searchInput" class="search-bar" placeholder="Search by name or ID..." onkeyup="filterTable()">
                 </div>
                 
@@ -76,7 +81,7 @@
                         <tr>
                             <th>Reg No</th>
                             <th>Full Name</th>
-                            <th>Branch</th>
+                            <th>Year</th> <th>Branch</th>
                             <th>Section</th>
                             <th>Phone</th>
                             <th style="text-align: center;">Action</th>
@@ -87,7 +92,7 @@
                         <tr id="row-{{ student[0] }}">
                             <td style="font-weight: 600;">{{ student[0] }}</td>
                             <td>{{ student[1] }}</td>
-                            <td>{{ student[2] }}</td>
+                            <td><span class="year-badge">{{ student[5] }} Year</span></td> <td>{{ student[2] }}</td>
                             <td>{{ student[3] }}</td>
                             <td>{{ student[4] }}</td>
                             <td style="text-align: center;">
@@ -111,9 +116,12 @@
                     const response = await fetch('/api/delete_student/' + regNo, { method: 'DELETE' });
                     const result = await response.json();
                     if (result.success) {
-                        document.getElementById('row-' + regNo).style.opacity = '0';
+                        const row = document.getElementById('row-' + regNo);
+                        row.style.transition = '0.3s';
+                        row.style.opacity = '0';
+                        row.style.transform = 'translateX(20px)';
                         setTimeout(() => {
-                            document.getElementById('row-' + regNo).remove();
+                            row.remove();
                         }, 300);
                     } else {
                         alert("Error: " + result.message);
