@@ -13,9 +13,13 @@ from datetime import datetime
 from facenet_pytorch import MTCNN, InceptionResnetV1
 import pandas as pd
 from io import BytesIO
+import math
+
 
 app = Flask(__name__)
+
 app.secret_key = "attendance_secret_key"
+
 
 # Mediapipe Face Mesh ని సిద్ధం చేయడం
 mp_face_mesh = mp.solutions.face_mesh
@@ -390,97 +394,97 @@ def student_login():
 # ==========================
 # 8) ATTENDANCE MARKING LOGIC
 # ==========================
+user_states = {} 
+
 @app.route('/api/mark_attendance', methods=['POST'])
 def mark_attendance():
     try:
         data = request.json
         mode = data.get('mode', '').upper().strip() 
-        subj_name = data.get('subject', 'General').strip()
-        period = data.get('period', '').strip()
-        subj = f"{subj_name} ({period})"
-        
-        f_year, f_branch, f_section = data.get('year'), data.get('branch'), data.get('section')
+        subj = f"{data.get('subject', 'General')} ({data.get('period', '')})"
+        f_yr, f_br, f_sec = str(data.get('year')).strip(), str(data.get('branch')).strip(), str(data.get('section')).strip()
 
-        # 1. Image Processing
         img_bytes = base64.b64decode(data.get('image').split(',')[1])
-        nparr = np.frombuffer(img_bytes, np.uint8)
-        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        frame = cv2.imdecode(np.frombuffer(img_bytes, np.uint8), cv2.IMREAD_COLOR)
+        h, w, _ = frame.shape
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        pil_img = Image.fromarray(rgb)
 
-        # 2. Blink Detection
-        mesh_results = face_mesh.process(rgb)
-        blink_map = []
-        if mesh_results.multi_face_landmarks:
-            for fl in mesh_results.multi_face_landmarks:
-                ear = (fl.landmark[145].y - fl.landmark[159].y + fl.landmark[374].y - fl.landmark[386].y) / 2
-                blink_map.append(ear < 0.02)
-
-        # 3. Recognition
-        boxes, _ = mtcnn.detect(pil_img)
+        boxes, _ = mtcnn.detect(Image.fromarray(rgb))
         final_results = []
 
         if boxes is not None:
-            face_tensors = mtcnn(pil_img)
-            if face_tensors is not None:
-                if len(face_tensors.shape) == 3: face_tensors = face_tensors.unsqueeze(0)
+            mesh_results = face_mesh.process(rgb)
+            face_tensors = mtcnn(Image.fromarray(rgb))
+            
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            cursor.execute("SELECT reg_no, name, branch, section, year, embedding FROM faces")
+            all_students = cursor.fetchall()
+            date_str, curr_time = datetime.now().strftime("%Y-%m-%d"), datetime.now()
+
+            for i in range(len(boxes)):
+                box = boxes[i]
+                new_emb = model(face_tensors[i].unsqueeze(0).to(device)).detach().cpu().numpy().flatten()
+                res = {"box": box.tolist(), "reg_no": "Unknown", "status": "Identifying...", "color": "white"}
                 
-                conn = sqlite3.connect(DB_PATH)
-                cursor = conn.cursor()
-                cursor.execute("SELECT reg_no, name, branch, section, year, embedding FROM faces")
-                all_students = cursor.fetchall()
-                date_str = datetime.now().strftime("%Y-%m-%d")
-                curr_time = datetime.now()
+                # ఫేస్ ఏరియా (జూమ్ ని ఆపడానికి)
+                face_area = (box[2] - box[0]) * (box[3] - box[1])
 
-                with torch.no_grad():
-                    for i, box in enumerate(boxes):
-                        new_emb = model(face_tensors[i].unsqueeze(0).to(device)).detach().cpu().numpy().flatten()
-                        res = {"box": box.tolist(), "reg_no": "Unknown", "status": "Not Registered", "color": "red"}
+                for reg_no, name, br, sec, yr, emb_blob in all_students:
+                    if np.linalg.norm(new_emb - np.frombuffer(emb_blob, dtype=np.float32)) < 0.70:
+                        res["reg_no"] = reg_no
                         
-                        for reg_no, name, br, sec, yr, emb_blob in all_students:
-                            dist = np.linalg.norm(new_emb - np.frombuffer(emb_blob, dtype=np.float32))
-                            if dist < 0.6:
-                                res["reg_no"] = reg_no
-                                
-                                # A. Wrong Class Check
-                                if (str(br).strip() != str(f_branch).strip() or 
-                                    str(sec).strip() != str(f_section).strip() or 
-                                    str(yr).strip() != str(f_year).strip()):
-                                    res["status"], res["color"] = f"Wrong Class! Use {yr}-{br}-{sec}", "orange"
-                                    break
+                        if str(yr).strip() != f_yr or str(br).strip() != f_br or str(sec).strip() != f_sec:
+                            res.update({"status": "Wrong Class!", "color": "orange"}); break
 
-                                # B. ALREADY MARKED CHECK (దీన్ని Blink కంటే ముందే పెట్టాను)
-                                cursor.execute("SELECT time FROM attendance WHERE reg_no=? AND date=? AND subject=? AND status=?", (reg_no, date_str, subj, mode))
-                                already_done = cursor.fetchone()
-                                if already_done:
-                                    res["status"], res["color"] = f"Already {mode} at {already_done[0]}", "green"
-                                    break
+                        cursor.execute("SELECT time FROM attendance WHERE reg_no=? AND date=? AND subject=? AND status=?", (reg_no, date_str, subj, mode))
+                        already = cursor.fetchone()
+                        if already:
+                            res.update({"status": f"Already Marked: {already[0]}", "color": "green"}); break 
 
-                                # C. BLINK CHECK (ఆల్రెడీ మార్క్ అవ్వకపోతేనే బ్లింక్ చేయమని అడుగుతుంది)
-                                if i >= len(blink_map) or not blink_map[i]:
-                                    res["status"], res["color"] = f"Blink to {mode}", "yellow"
-                                    break
+                        if reg_no not in user_states:
+                            user_states[reg_no] = {"blinked": False, "turned": False, "last_area": face_area}
 
-                                # D. SAVE ATTENDANCE (Blink చేసినప్పుడు మాత్రమే ఇక్కడికి వస్తుంది)
-                                if mode == 'OUT':
-                                    cursor.execute("SELECT time FROM attendance WHERE reg_no=? AND date=? AND subject=? AND status='IN'", (reg_no, date_str, subj))
-                                    if not cursor.fetchone():
-                                        res["status"], res["color"] = "No IN record found!", "red"
-                                    else:
-                                        out_t = curr_time.strftime("%H:%M:%S")
-                                        cursor.execute("INSERT INTO attendance (reg_no, name, branch, section, year, subject, date, time, status) VALUES (?,?,?,?,?,?,?,?,?)",
-                                                       (reg_no, name, br, sec, yr, subj, date_str, out_t, 'OUT'))
-                                        res["status"], res["color"] = f"OUT Marked at {out_t}", "green"
-                                else:
-                                    in_t = curr_time.strftime("%H:%M:%S")
-                                    cursor.execute("INSERT INTO attendance (reg_no, name, branch, section, year, subject, date, time, status) VALUES (?,?,?,?,?,?,?,?,?)",
-                                                   (reg_no, name, br, sec, yr, subj, date_str, in_t, 'IN'))
-                                    res["status"], res["color"] = f"IN Marked at {in_t}", "green"
-                                break
-                        final_results.append(res)
-                conn.commit()
-                conn.close()
+                        # 1. ANTI-ZOOM: ముఖం సైజులో మార్పు ఉంటే వెంటనే ఆపేయాలి
+                        area_diff = abs(face_area - user_states[reg_no]["last_area"]) / user_states[reg_no]["last_area"]
+                        user_states[reg_no]["last_area"] = face_area
+                        
+                        fl = mesh_results.multi_face_landmarks[i]
+                        ear = (fl.landmark[145].y - fl.landmark[159].y + fl.landmark[374].y - fl.landmark[386].y) / 2
+                        
+                        # Head Turn Logic with Depth Check
+                        nose_x = fl.landmark[1].x * w
+                        l_eye_x, r_eye_x = fl.landmark[33].x * w, fl.landmark[263].x * w
+                        turn_ratio = (nose_x - l_eye_x) / (r_eye_x - l_eye_x)
 
+                        # ఫోన్ ఊపితే లేదా జూమ్ చేస్తే అటెండెన్స్ బ్లాక్ అవుతుంది
+                        if area_diff > 0.04: 
+                            res.update({"status": "SPOOF: HOLD STILL", "color": "red"})
+                        
+                        # STEP 1: BLINK (జూమ్ లేనప్పుడు మాత్రమే)
+                        elif not user_states[reg_no]["blinked"]:
+                            if ear < 0.021:
+                                user_states[reg_no]["blinked"] = True
+                                res.update({"status": "BLINK OK! TURN HEAD", "color": "blue"})
+                            else:
+                                res.update({"status": "STEP 1: BLINK NOW", "color": "yellow"})
+
+                        # STEP 2: TURN HEAD (నిజమైన తల తిప్పడం మాత్రమే)
+                        elif not user_states[reg_no]["turned"]:
+                            if turn_ratio < 0.35 or turn_ratio > 0.65:
+                                user_states[reg_no]["turned"] = True
+                            res.update({"status": "STEP 2: TURN HEAD", "color": "cyan"})
+
+                        # FINAL SUCCESS
+                        if user_states[reg_no]["blinked"] and user_states[reg_no]["turned"]:
+                            t_str = curr_time.strftime("%H:%M:%S")
+                            cursor.execute("INSERT INTO attendance (reg_no, name, branch, section, year, subject, date, time, status) VALUES (?,?,?,?,?,?,?,?,?)", 
+                                           (reg_no, name, br, sec, yr, subj, date_str, t_str, mode))
+                            res.update({"status": f"SUCCESS: {t_str}", "color": "green"})
+                            del user_states[reg_no]
+                        break
+                final_results.append(res)
+            conn.commit(); conn.close()
         return jsonify({"success": True, "results": final_results})
     except Exception as e:
         return jsonify({"success": False, "message": str(e)})
