@@ -394,100 +394,184 @@ def student_login():
 # ==========================
 # 8) ATTENDANCE MARKING LOGIC
 # ==========================
-user_states = {} 
+user_states = {}
+
+def depth_is_real(curr_lm, prev_lm):
+    if prev_lm is None:
+        return False
+
+    depth_change = 0
+    for idx in [1, 33, 263, 199]:  # nose, eyes, chin
+        depth_change += abs(
+            curr_lm.landmark[idx].z -
+            prev_lm.landmark[idx].z
+        )
+
+    return depth_change > 0.01
+
 
 @app.route('/api/mark_attendance', methods=['POST'])
 def mark_attendance():
     try:
         data = request.json
-        mode = data.get('mode', '').upper().strip() 
+        mode = data.get('mode', '').upper().strip()
         subj = f"{data.get('subject', 'General')} ({data.get('period', '')})"
-        f_yr, f_br, f_sec = str(data.get('year')).strip(), str(data.get('branch')).strip(), str(data.get('section')).strip()
 
+        f_yr = str(data.get('year')).strip()
+        f_br = str(data.get('branch')).strip()
+        f_sec = str(data.get('section')).strip()
+
+        # -------- Image Decode --------
         img_bytes = base64.b64decode(data.get('image').split(',')[1])
         frame = cv2.imdecode(np.frombuffer(img_bytes, np.uint8), cv2.IMREAD_COLOR)
         h, w, _ = frame.shape
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
+        # -------- Face Detection --------
         boxes, _ = mtcnn.detect(Image.fromarray(rgb))
         final_results = []
 
-        if boxes is not None:
-            mesh_results = face_mesh.process(rgb)
-            face_tensors = mtcnn(Image.fromarray(rgb))
-            
-            conn = sqlite3.connect(DB_PATH)
-            cursor = conn.cursor()
-            cursor.execute("SELECT reg_no, name, branch, section, year, embedding FROM faces")
-            all_students = cursor.fetchall()
-            date_str, curr_time = datetime.now().strftime("%Y-%m-%d"), datetime.now()
+        if boxes is None:
+            return jsonify({"success": True, "results": []})
 
-            for i in range(len(boxes)):
-                box = boxes[i]
-                new_emb = model(face_tensors[i].unsqueeze(0).to(device)).detach().cpu().numpy().flatten()
-                res = {"box": box.tolist(), "reg_no": "Unknown", "status": "Identifying...", "color": "white"}
-                
-                # ఫేస్ ఏరియా (జూమ్ ని ఆపడానికి)
-                face_area = (box[2] - box[0]) * (box[3] - box[1])
+        mesh_results = face_mesh.process(rgb)
+        face_tensors = mtcnn(Image.fromarray(rgb))
 
-                for reg_no, name, br, sec, yr, emb_blob in all_students:
-                    if np.linalg.norm(new_emb - np.frombuffer(emb_blob, dtype=np.float32)) < 0.70:
-                        res["reg_no"] = reg_no
-                        
-                        if str(yr).strip() != f_yr or str(br).strip() != f_br or str(sec).strip() != f_sec:
-                            res.update({"status": "Wrong Class!", "color": "orange"}); break
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT reg_no, name, branch, section, year, embedding FROM faces")
+        all_students = cursor.fetchall()
 
-                        cursor.execute("SELECT time FROM attendance WHERE reg_no=? AND date=? AND subject=? AND status=?", (reg_no, date_str, subj, mode))
-                        already = cursor.fetchone()
-                        if already:
-                            res.update({"status": f"Already Marked: {already[0]}", "color": "green"}); break 
+        date_str = datetime.now().strftime("%Y-%m-%d")
+        curr_time = datetime.now()
 
-                        if reg_no not in user_states:
-                            user_states[reg_no] = {"blinked": False, "turned": False, "last_area": face_area}
+        for i in range(len(boxes)):
+            box = boxes[i]
+            res = {
+                "box": box.tolist(),
+                "reg_no": "Unknown",
+                "status": "Identifying...",
+                "color": "white"
+            }
 
-                        # 1. ANTI-ZOOM: ముఖం సైజులో మార్పు ఉంటే వెంటనే ఆపేయాలి
-                        area_diff = abs(face_area - user_states[reg_no]["last_area"]) / user_states[reg_no]["last_area"]
-                        user_states[reg_no]["last_area"] = face_area
-                        
-                        fl = mesh_results.multi_face_landmarks[i]
-                        ear = (fl.landmark[145].y - fl.landmark[159].y + fl.landmark[374].y - fl.landmark[386].y) / 2
-                        
-                        # Head Turn Logic with Depth Check
-                        nose_x = fl.landmark[1].x * w
-                        l_eye_x, r_eye_x = fl.landmark[33].x * w, fl.landmark[263].x * w
-                        turn_ratio = (nose_x - l_eye_x) / (r_eye_x - l_eye_x)
+            face_area = (box[2] - box[0]) * (box[3] - box[1])
+            new_emb = model(
+                face_tensors[i].unsqueeze(0).to(device)
+            ).detach().cpu().numpy().flatten()
 
-                        # ఫోన్ ఊపితే లేదా జూమ్ చేస్తే అటెండెన్స్ బ్లాక్ అవుతుంది
-                        if area_diff > 0.04: 
-                            res.update({"status": "SPOOF: HOLD STILL", "color": "red"})
-                        
-                        # STEP 1: BLINK (జూమ్ లేనప్పుడు మాత్రమే)
-                        elif not user_states[reg_no]["blinked"]:
-                            if ear < 0.021:
-                                user_states[reg_no]["blinked"] = True
-                                res.update({"status": "BLINK OK! TURN HEAD", "color": "blue"})
-                            else:
-                                res.update({"status": "STEP 1: BLINK NOW", "color": "yellow"})
+            for reg_no, name, br, sec, yr, emb_blob in all_students:
+                if np.linalg.norm(
+                    new_emb - np.frombuffer(emb_blob, dtype=np.float32)
+                ) < 0.70:
 
-                        # STEP 2: TURN HEAD (నిజమైన తల తిప్పడం మాత్రమే)
-                        elif not user_states[reg_no]["turned"]:
-                            if turn_ratio < 0.35 or turn_ratio > 0.65:
-                                user_states[reg_no]["turned"] = True
-                            res.update({"status": "STEP 2: TURN HEAD", "color": "cyan"})
+                    res["reg_no"] = reg_no
 
-                        # FINAL SUCCESS
-                        if user_states[reg_no]["blinked"] and user_states[reg_no]["turned"]:
-                            t_str = curr_time.strftime("%H:%M:%S")
-                            cursor.execute("INSERT INTO attendance (reg_no, name, branch, section, year, subject, date, time, status) VALUES (?,?,?,?,?,?,?,?,?)", 
-                                           (reg_no, name, br, sec, yr, subj, date_str, t_str, mode))
-                            res.update({"status": f"SUCCESS: {t_str}", "color": "green"})
-                            del user_states[reg_no]
+                    # -------- Wrong Class --------
+                    if str(yr) != f_yr or str(br) != f_br or str(sec) != f_sec:
+                        res.update({"status": "Wrong Class!", "color": "orange"})
                         break
-                final_results.append(res)
-            conn.commit(); conn.close()
+
+                    # -------- Already Marked --------
+                    cursor.execute(
+                        "SELECT time FROM attendance WHERE reg_no=? AND date=? AND subject=? AND status=?",
+                        (reg_no, date_str, subj, mode)
+                    )
+                    already = cursor.fetchone()
+                    if already:
+                        res.update({
+                            "status": f"Already Marked: {already[0]}",
+                            "color": "green"
+                        })
+                        break
+
+                    # -------- Init User State --------
+                    if reg_no not in user_states:
+                        user_states[reg_no] = {
+                            "blinked": False,
+                            "turned": False,
+                            "last_area": face_area,
+                            "last_landmarks": None
+                        }
+
+                    state = user_states[reg_no]
+
+                    # -------- Anti Zoom --------
+                    area_diff = abs(face_area - state["last_area"]) / state["last_area"]
+                    state["last_area"] = face_area
+
+                    if area_diff > 0.04:
+                        res.update({"status": "SPOOF: HOLD STILL", "color": "red"})
+                        break
+
+                    # -------- Face Mesh --------
+                    if not mesh_results.multi_face_landmarks:
+                        res.update({"status": "FACE NOT CLEAR", "color": "red"})
+                        break
+
+                    fl = mesh_results.multi_face_landmarks[i]
+
+                    # -------- Blink Check --------
+                    ear = (
+                        fl.landmark[145].y - fl.landmark[159].y +
+                        fl.landmark[374].y - fl.landmark[386].y
+                    ) / 2
+
+                    if not state["blinked"]:
+                        if ear < 0.021:
+                            state["blinked"] = True
+                            res.update({"status": "BLINK OK! TURN HEAD", "color": "blue"})
+                        else:
+                            res.update({"status": "STEP 1: BLINK NOW", "color": "yellow"})
+                        break
+
+                    # -------- Head Turn --------
+                    nose_x = fl.landmark[1].x * w
+                    l_eye_x = fl.landmark[33].x * w
+                    r_eye_x = fl.landmark[263].x * w
+                    turn_ratio = (nose_x - l_eye_x) / (r_eye_x - l_eye_x)
+
+                    if not state["turned"]:
+                        if turn_ratio < 0.35 or turn_ratio > 0.65:
+                            state["turned"] = True
+                        res.update({"status": "STEP 2: TURN HEAD", "color": "cyan"})
+                        break
+
+                    # -------- 3D DEPTH CHECK (ANTI MOBILE SCREEN) --------
+                    if not depth_is_real(fl, state["last_landmarks"]):
+                        res.update({
+                            "status": "SPOOF: REAL FACE ONLY",
+                            "color": "red"
+                        })
+                        state["last_landmarks"] = fl
+                        break
+
+                    state["last_landmarks"] = fl
+
+                    # -------- FINAL SUCCESS --------
+                    t_str = curr_time.strftime("%H:%M:%S")
+                    cursor.execute(
+                        "INSERT INTO attendance VALUES (?,?,?,?,?,?,?,?,?)",
+                        (reg_no, name, br, sec, yr, subj, date_str, t_str, mode)
+                    )
+
+                    res.update({
+                        "status": f"SUCCESS: {t_str}",
+                        "color": "green"
+                    })
+
+                    del user_states[reg_no]
+                    break
+
+            final_results.append(res)
+
+        conn.commit()
+        conn.close()
+
         return jsonify({"success": True, "results": final_results})
+
     except Exception as e:
         return jsonify({"success": False, "message": str(e)})
+
 
 # ==========================
 # 5) MANAGE STUDENTS
