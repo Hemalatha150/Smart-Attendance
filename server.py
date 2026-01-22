@@ -104,9 +104,9 @@ def toggle_attendance(mode, action):
 # ==========================
 # 2) WEB ROUTES
 # ==========================
-@app.route("/")
-def home():
-    return render_template("home.html")
+@app.route('/')
+def index():
+    return redirect(url_for('login_page'))
 
 
 @app.route("/secure_in")
