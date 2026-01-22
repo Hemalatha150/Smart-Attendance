@@ -391,35 +391,25 @@ def student_login():
     return jsonify({"success": False, "message": "Invalid Register Number or Password"})
 
 
-# ==========================
-# 8) ATTENDANCE MARKING LOGIC
-# ==========================
+# ===================
+# MARK ATTENDANCE
+# ===================
+
 user_states = {}
-
-def depth_is_real(curr_lm, prev_lm):
-    if prev_lm is None:
-        return False
-
-    depth_change = 0
-    for idx in [1, 33, 263, 199]:  # nose, eyes, chin
-        depth_change += abs(
-            curr_lm.landmark[idx].z -
-            prev_lm.landmark[idx].z
-        )
-
-    return depth_change > 0.01
-
 
 @app.route('/api/mark_attendance', methods=['POST'])
 def mark_attendance():
     try:
         data = request.json
         mode = data.get('mode', '').upper().strip()
-        subj = f"{data.get('subject', 'General')} ({data.get('period', '')})"
+
+        subject = str(data.get('subject', 'General')).strip()
+        period = str(data.get('period', '')).strip()
+        subj = f"{subject} ({period})"
 
         f_yr = str(data.get('year')).strip()
-        f_br = str(data.get('branch')).strip()
-        f_sec = str(data.get('section')).strip()
+        f_br = str(data.get('branch')).strip().upper()
+        f_sec = str(data.get('section')).strip().upper()
 
         # -------- Image Decode --------
         img_bytes = base64.b64decode(data.get('image').split(',')[1])
@@ -428,14 +418,18 @@ def mark_attendance():
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
         # -------- Face Detection --------
-        boxes, _ = mtcnn.detect(Image.fromarray(rgb))
+        pil_img = Image.fromarray(rgb)
+        boxes, _ = mtcnn.detect(pil_img)
         final_results = []
 
         if boxes is None:
             return jsonify({"success": True, "results": []})
 
         mesh_results = face_mesh.process(rgb)
-        face_tensors = mtcnn(Image.fromarray(rgb))
+        face_tensors = mtcnn.extract(pil_img, boxes, None)
+
+        if face_tensors is None or len(face_tensors) == 0:
+            return jsonify({"success": True, "results": []})
 
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
@@ -447,6 +441,9 @@ def mark_attendance():
 
         for i in range(len(boxes)):
             box = boxes[i]
+            x1, y1, x2, y2 = box
+            face_area = (x2 - x1) * (y2 - y1)
+
             res = {
                 "box": box.tolist(),
                 "reg_no": "Unknown",
@@ -454,7 +451,6 @@ def mark_attendance():
                 "color": "white"
             }
 
-            face_area = (box[2] - box[0]) * (box[3] - box[1])
             new_emb = model(
                 face_tensors[i].unsqueeze(0).to(device)
             ).detach().cpu().numpy().flatten()
@@ -466,96 +462,166 @@ def mark_attendance():
 
                     res["reg_no"] = reg_no
 
-                    # -------- Wrong Class --------
+                    # -------- RULE 1: WRONG CLASS --------
                     if str(yr) != f_yr or str(br) != f_br or str(sec) != f_sec:
-                        res.update({"status": "Wrong Class!", "color": "orange"})
-                        break
-
-                    # -------- Already Marked --------
-                    cursor.execute(
-                        "SELECT time FROM attendance WHERE reg_no=? AND date=? AND subject=? AND status=?",
-                        (reg_no, date_str, subj, mode)
-                    )
-                    already = cursor.fetchone()
-                    if already:
                         res.update({
-                            "status": f"Already Marked: {already[0]}",
-                            "color": "green"
+                            "status": f"Wrong Class! You belong to {yr}-{br}-{sec}",
+                            "color": "orange"
                         })
                         break
 
-                    # -------- Init User State --------
+                    # -------- RULE 2A: IN MODE DUPLICATE BLOCK (UNCHANGED) --------
+                    if mode == "IN":
+                        cursor.execute("""
+                            SELECT time FROM attendance
+                            WHERE reg_no=? AND date=? AND subject=? AND status='IN'
+                        """, (reg_no, date_str, subj))
+
+                        already = cursor.fetchone()
+                        if already:
+                            res.update({
+                                "status": f"You already marked at {already[0]}",
+                                "color": "orange"
+                            })
+                            break
+
+                    # -------- RULE 2B: OUT MODE VALIDATION (FIXED) --------
+                    if mode == "OUT":
+
+                        # 1) Fetch latest IN of today (ignore subject)
+                        cursor.execute("""
+                            SELECT time FROM attendance
+                            WHERE reg_no=? AND date=? AND status='IN'
+                            ORDER BY id DESC LIMIT 1
+                        """, (reg_no, date_str))
+
+                        in_row = cursor.fetchone()
+                        if not in_row:
+                            res.update({
+                                "status": "IN not marked yet",
+                                "color": "orange"
+                            })
+                            break
+
+                        in_time_str = in_row[0]
+
+                        # 2) Gap check (50 minutes)
+                        in_time = datetime.strptime(
+                            f"{date_str} {in_time_str}",
+                            "%Y-%m-%d %H:%M:%S"
+                        )
+
+                        diff_min = (curr_time - in_time).total_seconds() / 60
+
+                        if diff_min < 15:
+                            wait_min = math.ceil(15 - diff_min)
+                            if wait_min < 1:
+                                wait_min = 1
+                            res.update({
+                                "status": f"Too Early! Wait {wait_min} minutes",
+                                "color": "orange"
+                            })
+                            break
+
+                        # 3) Already OUT today?
+                        cursor.execute("""
+                            SELECT time FROM attendance
+                            WHERE reg_no=? AND date=? AND status='OUT'
+                            ORDER BY id DESC LIMIT 1
+                        """, (reg_no, date_str))
+
+                        out_row = cursor.fetchone()
+                        if out_row:
+                            res.update({
+                                "status": f"Already OUT at {out_row[0]}",
+                                "color": "orange"
+                            })
+                            break
+
+                    # -------- INIT USER STATE --------
                     if reg_no not in user_states:
                         user_states[reg_no] = {
                             "blinked": False,
                             "turned": False,
-                            "last_area": face_area,
-                            "last_landmarks": None
+                            "ear_frames": 0,
+                            "base_area": face_area,
+                            "base_cx": (x1 + x2) / 2,
+                            "base_cy": (y1 + y2) / 2
                         }
 
                     state = user_states[reg_no]
 
-                    # -------- Anti Zoom --------
-                    area_diff = abs(face_area - state["last_area"]) / state["last_area"]
-                    state["last_area"] = face_area
+                    # -------- SPOOF CHECK --------
+                    cx = (x1 + x2) / 2
+                    cy = (y1 + y2) / 2
 
-                    if area_diff > 0.04:
-                        res.update({"status": "SPOOF: HOLD STILL", "color": "red"})
+                    area_ratio = abs(face_area - state["base_area"]) / state["base_area"]
+                    center_dist = math.hypot(cx - state["base_cx"], cy - state["base_cy"])
+
+                    if area_ratio > 0.20:
+                        res.update({"status": "SPOOF: ZOOMING IMAGE", "color": "red"})
+                        del user_states[reg_no]
                         break
 
-                    # -------- Face Mesh --------
+                    if center_dist > 30 and area_ratio > 0.15:
+                        res.update({"status": "SPOOF: MOVING IMAGE", "color": "red"})
+                        del user_states[reg_no]
+                        break
+
+                    # -------- FACE MESH --------
                     if not mesh_results.multi_face_landmarks:
                         res.update({"status": "FACE NOT CLEAR", "color": "red"})
                         break
 
                     fl = mesh_results.multi_face_landmarks[i]
 
-                    # -------- Blink Check --------
+                    # -------- BLINK CHECK --------
                     ear = (
-                        fl.landmark[145].y - fl.landmark[159].y +
-                        fl.landmark[374].y - fl.landmark[386].y
+                        abs(fl.landmark[145].y - fl.landmark[159].y) +
+                        abs(fl.landmark[374].y - fl.landmark[386].y)
                     ) / 2
 
+                    EAR_THRESHOLD = 0.020
+                    EAR_FRAMES = 2
+
                     if not state["blinked"]:
-                        if ear < 0.021:
+                        if ear < EAR_THRESHOLD:
+                            state["ear_frames"] += 1
+                        else:
+                            state["ear_frames"] = 0
+
+                        if state["ear_frames"] >= EAR_FRAMES:
                             state["blinked"] = True
+                            state["ear_frames"] = 0
                             res.update({"status": "BLINK OK! TURN HEAD", "color": "blue"})
                         else:
                             res.update({"status": "STEP 1: BLINK NOW", "color": "yellow"})
                         break
 
-                    # -------- Head Turn --------
+                    # -------- HEAD TURN CHECK --------
                     nose_x = fl.landmark[1].x * w
                     l_eye_x = fl.landmark[33].x * w
                     r_eye_x = fl.landmark[263].x * w
                     turn_ratio = (nose_x - l_eye_x) / (r_eye_x - l_eye_x)
 
                     if not state["turned"]:
-                        if turn_ratio < 0.35 or turn_ratio > 0.65:
+                        if turn_ratio < 0.30 or turn_ratio > 0.70:
                             state["turned"] = True
-                        res.update({"status": "STEP 2: TURN HEAD", "color": "cyan"})
+                            res.update({"status": "HEAD TURN OK!", "color": "blue"})
+                        else:
+                            res.update({"status": "STEP 2: TURN HEAD", "color": "cyan"})
                         break
-
-                    # -------- 3D DEPTH CHECK (ANTI MOBILE SCREEN) --------
-                    if not depth_is_real(fl, state["last_landmarks"]):
-                        res.update({
-                            "status": "SPOOF: REAL FACE ONLY",
-                            "color": "red"
-                        })
-                        state["last_landmarks"] = fl
-                        break
-
-                    state["last_landmarks"] = fl
 
                     # -------- FINAL SUCCESS --------
                     t_str = curr_time.strftime("%H:%M:%S")
-                    cursor.execute(
-                        "INSERT INTO attendance VALUES (?,?,?,?,?,?,?,?,?)",
-                        (reg_no, name, br, sec, yr, subj, date_str, t_str, mode)
-                    )
+                    cursor.execute("""
+                        INSERT INTO attendance 
+                        (reg_no, name, branch, section, year, subject, date, time, status)
+                        VALUES (?,?,?,?,?,?,?,?,?)
+                    """, (reg_no, name, br, sec, yr, subj, date_str, t_str, mode))
 
                     res.update({
-                        "status": f"SUCCESS: {t_str}",
+                        "status": f"{mode} MARKED: {t_str}",
                         "color": "green"
                     })
 
@@ -570,7 +636,10 @@ def mark_attendance():
         return jsonify({"success": True, "results": final_results})
 
     except Exception as e:
+        print("MARK ERROR:", e)
         return jsonify({"success": False, "message": str(e)})
+
+
 
 
 # ==========================
