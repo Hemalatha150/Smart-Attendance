@@ -7,8 +7,9 @@ flask-cors
 numpy==1.24.4
 pandas==1.5.3
 # CPU వెర్షన్ టోర్చ్ వాడటం వల్ల మెమరీ ఆదా అవుతుంది
-torch==2.0.1 --index-url https://download.pytorch.org/whl/cpu
-torchvision --index-url https://download.pytorch.org/whl/cpu
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.0.1 
+torchvision 
 facenet-pytorch==2.5.2
 mediapipe
 scikit-learn==1.3.2
