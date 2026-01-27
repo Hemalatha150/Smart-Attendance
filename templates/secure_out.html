@@ -132,7 +132,14 @@
 
             try {
                 await fetch('/api/toggle_attendance/OUT/start');
-                stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
+                stream = await navigator.mediaDevices.getUserMedia({
+  video: {
+    facingMode: "user",
+    width: { ideal: 360 },
+    height: { ideal: 360 }
+  }
+});
+
                 const video = document.getElementById('webcam');
                 video.srcObject = stream;
                 
@@ -140,7 +147,7 @@
                 document.getElementById('stopBtn').style.display = 'inline-flex';
                 document.getElementById('scanning-indicator').style.display = 'block';
                 isScanning = true;
-                scanInterval = setInterval(processExit, 1000);
+                scanInterval = setInterval(processExit, 1500);
                 addLogEntry(`Session Started: ${subject}`, 'info');
             } catch (err) { alert("Camera Error: " + err); }
         }

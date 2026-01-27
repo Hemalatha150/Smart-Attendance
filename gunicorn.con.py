@@ -1,4 +1,5 @@
-workers = 1
+workers = 2
+threads = 4
 timeout = 120
 graceful_timeout = 120
 keepalive = 5

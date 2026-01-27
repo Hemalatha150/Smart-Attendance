@@ -122,13 +122,15 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # MTCNN thresholds తగ్గించాను (Look Down పనిచేయడానికి)
 mtcnn = MTCNN(
-    image_size=160, 
-    margin=14, 
-    keep_all=True, 
-    thresholds=[0.7, 0.8, 0.8], 
-    device=torch.device('cpu'), # కచ్చితంగా cpu అని ఉంచండి
-    post_process=False # మెమరీ ఆదా కోసం
+    image_size=160,
+    margin=12,
+    keep_all=True,
+    thresholds=[0.6, 0.7, 0.7],
+    device=torch.device('cpu'),
+    post_process=False,
+    min_face_size=60
 )
+
 model = InceptionResnetV1(pretrained='vggface2').eval().to('cpu')
 
 temp_embeddings = {}

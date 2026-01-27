@@ -204,7 +204,14 @@
 
             try {
                 await fetch('/api/toggle_attendance/IN/start');
-                stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
+                stream = await navigator.mediaDevices.getUserMedia({
+  video: {
+    facingMode: "user",
+    width: { ideal: 360 },
+    height: { ideal: 360 }
+  }
+});
+
                 const video = document.getElementById('webcam');
                 video.srcObject = stream;
                 
