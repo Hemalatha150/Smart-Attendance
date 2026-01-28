@@ -13,7 +13,6 @@ from facenet_pytorch import MTCNN, InceptionResnetV1
 import pandas as pd
 from io import BytesIO
 import math
-import time
 import mediapipe as mp
 
 os.environ["GLOG_minloglevel"] = "2"
@@ -473,7 +472,10 @@ def logout():
 @app.route('/faculty_dashboard')
 def faculty_dashboard():
     if session.get('role') != 'faculty': return redirect(url_for('login_page'))
+
     today = datetime.now().strftime('%Y-%m-%d')
+
+
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("SELECT COUNT(DISTINCT reg_no) FROM attendance WHERE date = ?", (today,))
@@ -578,8 +580,11 @@ def mark_attendance():
         cursor.execute("SELECT reg_no, name, branch, section, year, embedding FROM faces")
         all_students = cursor.fetchall()
 
-        date_str = datetime.now().strftime("%Y-%m-%d")
         curr_time = datetime.now()
+        date_str = curr_time.strftime("%Y-%m-%d")
+
+        t_str = curr_time.strftime("%H:%M:%S")
+
 
         for i in range(len(boxes)):
             box = boxes[i]
@@ -660,7 +665,8 @@ def mark_attendance():
                     res.update({"status": "IN not marked yet", "color": "orange"})
                     skip_to_liveness = False
                 else:
-                    in_time = datetime.strptime(f"{date_str} {in_row[0]}", "%Y-%m-%d %H:%M:%S")
+                    in_time = datetime.strptime(f"{date_str} {in_row[0]}","%Y-%m-%d %H:%M:%S")
+
                     diff_min = (curr_time - in_time).total_seconds() / 60
 
                     if diff_min < 5:
@@ -712,7 +718,7 @@ def mark_attendance():
                    abs(fl.landmark[374].y - fl.landmark[386].y)) / 2
 
             if not state["blinked"]:
-                if ear < 0.020:
+                if ear < 0.035:
                     state["ear_frames"] += 1
                 else:
                     state["ear_frames"] = 0
