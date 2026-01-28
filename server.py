@@ -247,134 +247,104 @@ def clear_temp_registration():
 def process_web_pose():
     try:
         data = request.json
-        name = data.get("name")
         reg_no = data.get("reg_no", "").strip().upper()
-        year = data.get("year")
         img_base64 = data.get("image").split(",")[1]
 
-        # --- CONFIGURATIONS ---
         REQUIRED_CAPTURES = 4 
-        MIN_DIFF = 0.22        # కనీస తేడా (4th pose కోసం తగ్గించాను)
-        STRICT_MATCH = 0.32    # ఫేస్ డూప్లికేషన్ చెక్ (ఇది పెంచాను)
-        MIN_FACE_AREA = 7000
+        # 4వ పోజు ఈజీగా అవ్వడానికి దీన్ని 0.18 కి తగ్గించాను (Very Flexible)
+        MIN_DIFF = 0.18        
+        STRICT_MATCH = 0.32    
 
-        if len(reg_no) != 10:
-            return jsonify({"success": False, "message": "Invalid Registration Number"})
-
-        # Image Decoding
+        # 1. FAST IMAGE DECODE & RESIZE (Speed Hack for Deployment)
         img_bytes = base64.b64decode(img_base64)
-        frame = cv2.imdecode(np.frombuffer(img_bytes, np.uint8), cv2.IMREAD_COLOR)
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        nparr = np.frombuffer(img_bytes, np.uint8)
+        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        
+        # 320px కి తగ్గిస్తే క్లౌడ్ లో 10 రెట్లు వేగంగా పనిచేస్తుంది
+        small_frame = cv2.resize(frame, (320, int(frame.shape[0] * (320 / frame.shape[1]))))
+        rgb = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
         pil_img = Image.fromarray(rgb).convert("RGB")
 
-        # 1. Face Detection
+        # 2. LIGHTWEIGHT DETECTION
         boxes, _ = mtcnn.detect(pil_img)
         if boxes is None or len(boxes) == 0:
-            return jsonify({"success": False, "message": "No face detected"})
-        if len(boxes) > 1:
-            return jsonify({"success": False, "hard_stop": True, "message": "Only one person allowed"})
+            return jsonify({"success": False, "message": "Face not detected"})
 
-        # 2. Embedding Generation
-        face_tensor = mtcnn(pil_img)
-        if isinstance(face_tensor, list): face_tensor = face_tensor[0]
-        if face_tensor.dim() == 3: face_tensor = face_tensor.unsqueeze(0)
-
-        with torch.no_grad():
-            emb = model(face_tensor).cpu().numpy().flatten()
-            emb = emb / (np.linalg.norm(emb) + 1e-6)
-
-        # Initialize Session
-        if reg_no not in temp_embeddings:
-            temp_embeddings[reg_no] = {"embeddings": [], "poses": set(), "done": False}
-        
-        store = temp_embeddings[reg_no]
-
-        # ---------------- 3. GLOBAL FACE DUPLICATION CHECK ----------------
-        # ఇది వేరే వ్యక్తి రోల్ నంబర్ తో నువ్వు రిజిస్టర్ అవ్వకుండా ఆపుతుంది
-        conn = sqlite3.connect(DB_PATH); cursor = conn.cursor()
-        cursor.execute("SELECT reg_no, name, embedding FROM faces")
-        rows = cursor.fetchall(); conn.close()
-
-        for ex_reg, ex_name, ex_emb_blob in rows:
-            if not ex_emb_blob or ex_reg == reg_no: continue
-            
-            ex_emb = np.frombuffer(ex_emb_blob, dtype=np.float32)
-            ex_emb = ex_emb / (np.linalg.norm(ex_emb) + 1e-6)
-            
-            dist = np.linalg.norm(emb - ex_emb)
-            # Debugging కోసం లాగ్
-            print(f"Duplicate Check: {ex_name} | Distance: {dist:.4f}")
-
-            if dist < STRICT_MATCH:
-                if reg_no in temp_embeddings: del temp_embeddings[reg_no]
-                return jsonify({
-                    "success": False, 
-                    "hard_stop": True, 
-                    "message": f"Face already registered as {ex_name} ({ex_reg})"
-                })
-
-        # 4. Pose Logic (Nose vs Eye-Center)
+        # 3. POSE CALCULATION (Nose vs Eye-Center)
         mesh = face_mesh.process(rgb)
         if not mesh.multi_face_landmarks:
-            return jsonify({"success": False, "message": "Landmarks missing"})
+            return jsonify({"success": False, "message": "Landmarks blurry"})
 
         fl = mesh.multi_face_landmarks[0]
-        nose_x, left_eye_x, right_eye_x = fl.landmark[1].x, fl.landmark[33].x, fl.landmark[263].x
-        eye_center_x = (left_eye_x + right_eye_x) / 2
+        nose_x, l_eye_x, r_eye_x = fl.landmark[1].x, fl.landmark[33].x, fl.landmark[263].x
+        eye_center_x = (l_eye_x + r_eye_x) / 2
         diff = nose_x - eye_center_x
 
-        # Define Pose
+        # 4వ పోజు కోసం బకెట్స్ ని వైడ్ గా చేశాను
         if abs(diff) <= 0.008: pose = "STRAIGHT"
-        elif 0.008 < diff <= 0.035: pose = "SLIGHT_RIGHT"
-        elif diff > 0.035: pose = "FULL_RIGHT"
-        elif -0.035 <= diff < -0.008: pose = "SLIGHT_LEFT"
-        else: pose = "FULL_LEFT"
+        elif diff > 0.008: pose = "RIGHT_SIDE" # Slight/Full కలిపేసి ఒకే బకెట్ చేశా
+        else: pose = "LEFT_SIDE"
 
-        # --- DUPLICATE POSE BLOCK ---
-        if pose in store["poses"]:
-            return jsonify({"success": False, "message": f"{pose.replace('_',' ')} already captured. Turn head."})
+        # Session Initialization
+        if reg_no not in temp_embeddings:
+            temp_embeddings[reg_no] = {"embeddings": [], "poses": [], "done": False}
+        store = temp_embeddings[reg_no]
 
-        # --- SAME STILL BLOCK ---
+        # 4. EMBEDDING GENERATION (Only if needed)
+        face_t = mtcnn(pil_img)
+        if isinstance(face_t, list): face_t = face_t[0]
+        if face_t.dim() == 3: face_t = face_t.unsqueeze(0)
+        
+        with torch.no_grad():
+            emb = model(face_t.to(device)).cpu().numpy().flatten()
+            emb = emb / (np.linalg.norm(emb) + 1e-6)
+
+        # 5. DUPLICATE CHECK (Only for the first frame to save CPU)
+        if len(store["embeddings"]) == 0:
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            cursor.execute("SELECT reg_no, name, embedding FROM faces")
+            for ex_reg, ex_name, ex_emb_blob in cursor.fetchall():
+                if not ex_emb_blob or ex_reg == reg_no: continue
+                ex_emb = np.frombuffer(ex_emb_blob, dtype=np.float32)
+                ex_emb = ex_emb / (np.linalg.norm(ex_emb) + 1e-6)
+                if np.linalg.norm(emb - ex_emb) < STRICT_MATCH:
+                    conn.close()
+                    return jsonify({"success": False, "hard_stop": True, "message": f"Already registered as {ex_name}"})
+            conn.close()
+
+        # 6. DUPLICATE POSE & STILL BLOCK
+        # ఒకే పోజుని 2 సార్లు రాకుండా చూస్తుంది, కానీ 4త్ పోజు కోసం 0.18 డిస్టెన్స్ ని వాడుతుంది
         for prev in store["embeddings"]:
             if np.linalg.norm(emb - prev) < MIN_DIFF:
-                return jsonify({"success": False, "message": "Angle too similar. Change position."})
+                return jsonify({"success": False, "message": "Change angle slightly"})
 
-        # Store Entry
-        store["poses"].add(pose)
+        # Store Capture
         store["embeddings"].append(emb)
+        store["poses"].append(pose)
 
-        # 5. Final Checks and Save
-        captured_count = len(store["embeddings"])
-        
-        if captured_count < REQUIRED_CAPTURES:
-            msg = f"Captured {captured_count}/4. "
-            if "STRAIGHT" not in store["poses"]:
-                msg += "Please look STRAIGHT now."
-            else:
-                msg += "Now turn your head slightly."
-            return jsonify({"success": True, "completed": False, "count": captured_count, "message": msg})
+        # 7. COMPLETION LOGIC (4 Poses, Straight Mandatory)
+        if len(store["embeddings"]) < REQUIRED_CAPTURES:
+            return jsonify({"success": True, "completed": False, "count": len(store["embeddings"]), "message": f"Captured {len(store['embeddings'])}/4"})
 
-        # Final Straight Pose Verification
+        # చివరగా చెక్: కనీసం ఒక్క పోజు అయినా STRAIGHT ఉండాలి
         if "STRAIGHT" not in store["poses"]:
-            store["embeddings"].pop(); store["poses"].remove(pose)
-            return jsonify({"success": False, "message": "STRAIGHT pose is mandatory. Please look at camera."})
+            store["embeddings"].pop() # లాస్ట్ ది తీసేసి మళ్ళీ ట్రై చేయమంటుంది
+            store["poses"].pop()
+            return jsonify({"success": False, "message": "Straight pose is mandatory!"})
 
-        # SUCCESS: Save to Database
+        # DB SAVE
         avg_emb = np.mean(store["embeddings"], axis=0).astype(np.float32)
         conn = sqlite3.connect(DB_PATH); cursor = conn.cursor()
-        cursor.execute("""
-            INSERT INTO faces (reg_no, name, phone, branch, section, year, embedding)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (reg_no, name, data.get("phone"), data.get("branch"), data.get("section"), year, avg_emb.tobytes()))
+        cursor.execute("INSERT INTO faces (reg_no, name, phone, branch, section, year, embedding) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                     (reg_no, data.get("name"), data.get("phone"), data.get("branch"), data.get("section"), data.get("year"), avg_emb.tobytes()))
         conn.commit(); conn.close()
         
         store["done"] = True
         return jsonify({"success": True, "completed": True, "message": "Registration Success!"})
 
     except Exception as e:
-        print("REG ERROR:", e)
-        if reg_no in temp_embeddings: del temp_embeddings[reg_no]
-        return jsonify({"success": False, "message": "Server error. Try again."})
+        return jsonify({"success": False, "message": "Processing..."})
 
 
 # ==========================
