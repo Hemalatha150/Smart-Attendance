@@ -116,7 +116,7 @@
             <h4 id="pose-instruction" style="margin-bottom:10px; color: var(--text-dark);">Starting Camera...</h4>
             <video id="webcam" autoplay playsinline></video>
             <div class="progress-bar"><div id="progress-fill"></div></div>
-            <div id="capture-status" class="status-msg" style="color: var(--primary);">0/2 Poses Captured</div>
+            <div id="capture-status" class="status-msg" style="color: var(--primary);">0/4 Poses Captured</div>
 
             <button onclick="closeCamera()" style="margin-top: 15px; color: #d93025; border: none; background: none; font-weight: bold; cursor: pointer;">Cancel</button>
         </div>
@@ -183,7 +183,7 @@ async function validateAndOpenCamera() {
 let stream = null;
 let captureCount = 0;
 let autoTimer = null;
-const TOTAL_CAPTURES = 5;
+const TOTAL_CAPTURES = 4;
 
 async function openCamera() {
     document.getElementById("camera-overlay").style.display = "flex";
@@ -216,11 +216,13 @@ function updateUI() {
     const pct = (captureCount / TOTAL_CAPTURES) * 100;
     document.getElementById("progress-fill").style.width = pct + "%";
     document.getElementById("capture-status").innerText =
-        captureCount + "/" + TOTAL_CAPTURES + " Captures";
+        captureCount + "/" + TOTAL_CAPTURES + " Poses Captured";
 
-    let msg = "Look straight at camera";
-    if (captureCount >= 1) msg = "Turn head slightly left or right";
-    if (captureCount >= 3) msg = "Keep changing angle slowly";
+    let msg = "Look straight at the camera (Main Pose)";
+    
+    // బ్యాకెండ్ మెసేజ్ ని బట్టి కూడా ఇది అప్‌డేట్ అవుతుంది, కానీ ఇక్కడ డెఫాల్ట్ హింట్స్ ఇస్తున్నాం
+    if (captureCount >= 1) msg = "Good! Now turn your head slightly left or right";
+    if (captureCount >= 3) msg = "Almost done! One more different angle";
     if (captureCount >= TOTAL_CAPTURES) msg = "Finishing enrollment...";
 
     document.getElementById("pose-instruction").innerText = msg;
