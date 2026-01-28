@@ -122,6 +122,21 @@
     </div>
 
     <script>
+
+        function utcToIST(timeStr) {
+    if (!timeStr || !timeStr.includes(":")) return timeStr;
+
+    const parts = timeStr.split(":").map(Number);
+    const d = new Date();
+    d.setUTCHours(parts[0], parts[1], parts[2] || 0);
+
+    return d.toLocaleTimeString("en-IN", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit"
+    });
+}
+
         let stream = null, isScanning = false, scanInterval = null;
 
         async function startExitScan() {
@@ -184,10 +199,21 @@
 
     // ✅ Only SUCCESS case show
     if (res.status && res.status.includes("MARKED")) {
-        showPopup(res.reg_no + ": " + res.status, res.color);
-        addLogEntry(res.reg_no + ": " + res.status, 'out');
-        return;
+
+    let fixedStatus = res.status;
+
+    // ⏰ Extract HH:MM:SS from status and convert UTC → IST
+    const timeMatch = res.status.match(/\d{2}:\d{2}:\d{2}/);
+    if (timeMatch) {
+        const istTime = utcToIST(timeMatch[0]);
+        fixedStatus = res.status.replace(timeMatch[0], istTime);
     }
+
+    showPopup(res.reg_no + ": " + fixedStatus, res.color);
+    addLogEntry(res.reg_no + ": " + fixedStatus, 'out');
+    return;
+}
+
 
     // ❌ Ignore all error/info statuses silently
     const ignoreList = [

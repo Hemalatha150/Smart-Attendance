@@ -192,6 +192,21 @@
     </div>
 
     <script>
+
+        function utcToIST(timeStr) {
+    if (!timeStr || !timeStr.includes(":")) return timeStr;
+
+    const parts = timeStr.split(":").map(Number);
+    const d = new Date();
+    d.setUTCHours(parts[0], parts[1], parts[2] || 0);
+
+    return d.toLocaleTimeString("en-IN", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit"
+    });
+}
+
         let stream = null;
         let isScanning = false;
         let scanInterval = null;
@@ -256,10 +271,22 @@
             drawBoxes(result.results);
             result.results.forEach(res => {
                 // సర్వర్ నుండి వచ్చే స్టేటస్ మెసేజ్ ని బట్టి లాగ్
-                if (res.status.includes("Marked")) {
-                    addLogEntry(`Present: ${res.reg_no} (${res.status})`, 'success');
-                    showPopup(res.reg_no + ": " + res.status, res.color);
-                } else if (res.color === "orange" || res.color === "red") {
+                if (res.status.includes("MARKED") || res.status.includes("marked")) {
+
+    let fixedStatus = res.status;
+
+    // Extract time from status and convert to IST
+    const timeMatch = res.status.match(/\d{2}:\d{2}:\d{2}/);
+    if (timeMatch) {
+        const istTime = utcToIST(timeMatch[0]);
+        fixedStatus = res.status.replace(timeMatch[0], istTime);
+    }
+
+    addLogEntry(`Present: ${res.reg_no} (${fixedStatus})`, 'success');
+    showPopup(res.reg_no + ": " + fixedStatus, res.color);
+}
+
+                 else if (res.color === "orange" || res.color === "red") {
                     addLogEntry(`${res.reg_no}: ${res.status}`, 'error');
                 }
             });
