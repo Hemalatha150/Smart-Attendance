@@ -1,5 +1,20 @@
-/* Hamburger button */
-.hamburger {
+ /* =========================
+   GLOBAL MOBILE FIXES
+========================= */
+
+*{
+  box-sizing: border-box;
+}
+
+img, video{
+  max-width: 100%;
+}
+
+/* =========================
+   HAMBURGER BUTTON
+========================= */
+
+.hamburger{
   font-size: 22px;
   background: none;
   border: none;
@@ -7,55 +22,122 @@
   display: none;
 }
 
-/* MOBILE VIEW */
+/* =========================
+   MOBILE STYLES
+========================= */
+
 @media (max-width:768px){
 
-  .hamburger {
-    display: block;
+  /* Show hamburger */
+  .hamburger{
+    display:block;
   }
 
-  .sidebar {
+  /* ===== SIDEBAR ===== */
+
+  .sidebar{
     position: fixed;
     left: -260px;
-    top: 0;
-    width: 260px;
-    height: 100%;
-    background: white;
-    transition: 0.3s;
-    z-index: 1000;
+    top:0;
+    width:260px;
+    height:100%;
+    background:#fff;
+    transition:0.3s;
+    z-index:1000;
+    overflow-y:auto;
   }
 
-  .sidebar.active {
-    left: 0;
+  .sidebar.active{
+    left:0;
   }
 
-  .main-content {
-    margin-left: 0 !important;
-    width: 100% !important;
+  /* ===== MAIN CONTENT ===== */
+
+  .main-content,
+  .main-container{
+    margin-left:0 !important;
+    width:100% !important;
   }
 
-}
+  .content-body,
+  .content-container{
+    padding:15px !important;
+  }
 
-/* CAMERA RESPONSIVE */
-@media (max-width: 768px){
+  /* ===== HEADER ===== */
+
+  .top-header{
+    padding:10px 15px !important;
+    justify-content:space-between;
+  }
+
+  /* ===== CARDS ===== */
+
+  .stats-grid{
+    grid-template-columns:1fr !important;
+  }
+
+  .stat-card{
+    padding:15px;
+  }
+
+  /* ===== FORMS ===== */
+
+  .selection-container{
+    flex-direction:column;
+    align-items:stretch;
+  }
+
+  .filter-inputs{
+    flex-direction:column;
+  }
+
+  .form-group{
+    width:100%;
+  }
+
+  /* ===== TABLE FIX ===== */
+
+  .table-container{
+    overflow-x:auto;
+  }
+
+  table{
+    min-width:600px;
+  }
+
+  /* =========================
+     CAMERA RESPONSIVE
+  ========================= */
 
   .camera-container,
   .video-container,
+  .camera-box,
   #video,
-  video {
-      width: 100% !important;
-      height: auto !important;
-      max-width: 100%;
+  video{
+    width:100% !important;
+    height:auto !important;
   }
 
-  .camera-box{
-      width: 100%;
-      padding: 10px;
+  video{
+    object-fit:cover;
+    border-radius:12px;
   }
 
   .controls{
-      flex-direction: column;
-      gap: 10px;
+    flex-direction:column;
+    gap:10px;
+  }
+
+  .btn-generate,
+  .btn-primary{
+    width:100%;
+  }
+
+  /* ===== DASHBOARD CARDS ===== */
+
+  .dashboard-cards{
+    grid-template-columns:1fr !important;
   }
 
 }

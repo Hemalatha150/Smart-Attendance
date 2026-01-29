@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+ <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -44,14 +44,17 @@
 
         /* Container for Video + Overlay */
        .video-container {
-          position: relative;
-           width: 640px;
-           height: 480px;
-           margin: 0 auto;
-           border-radius: 12px;
-           background: #000; /* ఇక్కడ బ్లాక్ కలర్ సెట్ చేశాను */
-           border: 2px solid #dadce0;
-         }
+  position: relative;
+  width: 100%;
+  max-width: 640px;
+  aspect-ratio: 4/3;
+  margin: 0 auto;
+  border-radius: 12px;
+  background: #000;
+  border: 2px solid #dadce0;
+  overflow: hidden;
+}
+
 
         video {
            width: 100%;
@@ -65,8 +68,8 @@
     position: absolute;
     top: 0;
     left: 0;
-    width: 640px;
-    height: 480px;
+    width: 100%;
+    height: 100%;
     pointer-events: none;
     z-index: 10;
         }
@@ -98,6 +101,13 @@
         .log-error { color: #d93025; }
 
         #scan-popup { position: absolute; top: 45%; left: 50%; transform: translate(-50%, -50%); padding: 15px 30px; background: white; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.15); z-index: 100; display: none; font-weight: bold; font-size: 17px; border-top: 4px solid; }
+
+        @media (max-width:768px){
+  .attendance-grid{
+    flex-direction:column;
+  }
+}
+
     </style>
 </head>
 <body>

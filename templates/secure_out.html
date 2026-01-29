@@ -46,8 +46,8 @@
         .camera-box { flex: 2; background: white; border-radius: 20px; box-shadow: var(--shadow); padding: 20px; text-align: center; position: relative; }
         
         /* Mirroring for Video and Canvas Overlay */
-        .video-wrapper { position: relative; width: 100%; max-width: 640px; margin: 0 auto; background: #000; border-radius: 12px; overflow: hidden; height:480px; border: 2px solid #dadce0; }
-        video { width: 100%; height: auto; display: block; transform: scaleX(-1); }
+        .video-wrapper { position: relative; width: 100%; max-width: 640px; margin: 0 auto; background: #000; border-radius: 12px; overflow: hidden; height:480px; border: 2px solid #dadce0; aspect-ratio: 4/3;}
+        video { width: 100%; height: 100%; display: block; transform: scaleX(-1); object-fit:cover;}
         #overlay-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5; }
 
         #scanning-indicator { position: absolute; top: 35px; left: 35px; background: var(--exit-red); color: white; padding: 5px 12px; border-radius: 20px; font-size: 11px; font-weight: bold; display: none; z-index: 10; }
@@ -63,6 +63,13 @@
         #log-list li { padding: 10px 0; border-bottom: 1px solid #f8f9fa; font-size: 13px; display: flex; justify-content: space-between; }
         
         #scan-popup { position: absolute; top: 45%; left: 50%; transform: translate(-50%, -50%); padding: 15px 30px; background: white; border-radius: 12px; box-shadow: 0 10px 40px rgba(0,0,0,0.3); z-index: 9999; display: none; font-weight: bold; font-size: 17px; border-top: 5px solid; min-width: 250px; }
+
+        @media (max-width:768px){
+  .attendance-grid{
+    flex-direction:column;
+  }
+}
+
     </style>
 </head>
 <body>
