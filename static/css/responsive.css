@@ -13,6 +13,19 @@ html,body{
   overflow-x:hidden;
 }
 
+/* ===== SAFE AREA FIX FOR APK / PWA ===== */
+
+body{
+  padding-top: env(safe-area-inset-top);
+}
+
+/* Header ki extra safety */
+
+.top-header{
+  padding-top: calc(10px + env(safe-area-inset-top)) !important;
+}
+
+
 img,video{
   max-width:100%;
 }
@@ -244,4 +257,4 @@ video{
   font-size:14px;
 }
 
-}
+} 
