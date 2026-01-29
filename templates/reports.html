@@ -20,7 +20,7 @@
         body { font-family: 'Segoe UI', sans-serif; background: var(--main-bg); margin: 0; display: flex; }
 
         /* Sidebar */
-        .sidebar { width: 260px; height: 100vh; background: var(--sidebar-bg); border-right: 1px solid #e0e0e0; position: fixed; left: 0; top: 0; }
+        .sidebar { width: 260px; height: 100vh; background: var(--sidebar-bg); border-right: 1px solid #e0e0e0; position: fixed; top: 0; }
         .sidebar-header { padding: 25px; font-size: 22px; font-weight: bold; color: var(--primary); border-bottom: 1px solid #f1f3f4; }
         .menu-item { padding: 14px 25px; display: flex; align-items: center; gap: 15px; color: var(--text-light); text-decoration: none; font-weight: 500; }
         .menu-item.active { background: #e8f0fe; color: var(--primary); border-left: 5px solid var(--primary); }
@@ -96,9 +96,84 @@
         .out-time { color: #d93025; }
 
         .no-data { padding: 40px; text-align: center; color: var(--text-light); }
+
+/* ================= MOBILE PERFECT FIX ================= */
+
+@media (max-width:768px){
+
+  /* ===== MAIN LAYOUT ===== */
+  .main-container{
+    margin-left:0 !important;
+    width:100% !important;
+  }
+
+  .content-body{
+    padding:15px !important;
+  }
+
+  /* ===== HEADER ===== */
+  .top-header{
+    padding:10px 15px !important;
+    justify-content:space-between;
+  }
+
+  /* ===== TITLE + DOWNLOAD ===== */
+  .content-body > div:first-child{
+    flex-direction:column !important;
+    align-items:flex-start !important;
+    gap:10px;
+  }
+
+  /* ===== FILTER SECTION ===== */
+  .selection-container{
+    flex-direction:column !important;
+    align-items:stretch !important;
+    gap:15px;
+    padding:15px !important;
+  }
+
+  .filter-inputs{
+    flex-direction:column !important;
+    gap:12px !important;
+  }
+
+  .input-card{
+    width:100% !important;
+  }
+
+  input,
+  select{
+    width:100% !important;
+  }
+
+  /* ===== BUTTONS ===== */
+  .btn-generate{
+    width:100% !important;
+    justify-content:center;
+    height:45px;
+  }
+
+  /* ===== STATS ===== */
+  .stats-grid{
+    grid-template-columns:1fr !important;
+  }
+
+  /* ===== TABLE ===== */
+  .table-container{
+    overflow-x:auto;
+  }
+
+  table{
+    min-width:650px;
+  }
+
+}
+
+
     </style>
 </head>
 <body>
+<div id="sidebarOverlay"></div>
 
     <div class="sidebar">
         <div class="sidebar-header">Faculty Portal</div>
@@ -128,8 +203,9 @@
 
         <div class="content-body">
 
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; margin-top: 15px;">
-                 <h2 style="margin: 0;">Attendance Reports</h2>
+           <div class="report-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; margin-top: 15px;">
+
+            <h2 style="margin: 0;">Attendance Reports</h2>
     
                 <a href="#" 
    class="btn-generate" 
@@ -282,10 +358,25 @@
 
 const toggle = document.getElementById("menuToggle");
 const sidebar = document.querySelector(".sidebar");
+const overlay = document.getElementById("sidebarOverlay");
 
 toggle.addEventListener("click", ()=>{
   sidebar.classList.toggle("active");
+  overlay.classList.toggle("active");
 });
+
+overlay.addEventListener("click", ()=>{
+  sidebar.classList.remove("active");
+  overlay.classList.remove("active");
+});
+
+document.querySelectorAll(".menu-item").forEach(item=>{
+  item.addEventListener("click", ()=>{
+    sidebar.classList.remove("active");
+    overlay.classList.remove("active");
+  });
+});
+
 
     </script>
 </body>

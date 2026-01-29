@@ -21,7 +21,7 @@
         body { font-family: 'Segoe UI', sans-serif; background: var(--main-bg); margin: 0; display: flex; overflow-x: hidden; }
 
         /* Sidebar */
-        .sidebar { width: 260px; height: 100vh; background: var(--sidebar-bg); border-right: 1px solid #e0e0e0; position: fixed; left: 0; top: 0; z-index: 1000; }
+        .sidebar { width: 260px; height: 100vh; background: var(--sidebar-bg); border-right: 1px solid #e0e0e0; position: fixed;  top: 0; z-index: 1000; }
         .sidebar-header { padding: 25px; font-size: 22px; font-weight: bold; color: var(--primary); border-bottom: 1px solid #f1f3f4; }
         .menu-item { padding: 14px 25px; display: flex; align-items: center; gap: 15px; color: var(--text-light); text-decoration: none; font-weight: 500; transition: 0.3s; }
         .menu-item.active { background: #fee8e7; color: var(--exit-red); border-left: 5px solid var(--exit-red); }
@@ -46,7 +46,7 @@
         .camera-box { flex: 2; background: white; border-radius: 20px; box-shadow: var(--shadow); padding: 20px; text-align: center; position: relative; }
         
         /* Mirroring for Video and Canvas Overlay */
-        .video-wrapper { position: relative; width: 100%; max-width: 640px; margin: 0 auto; background: #000; border-radius: 12px; overflow: hidden; height:480px; border: 2px solid #dadce0; aspect-ratio: 4/3;}
+        .video-wrapper { position: relative; width: 100%; max-width: 640px; margin: 0 auto; background: #000; border-radius: 12px; overflow: hidden; border: 2px solid #dadce0; aspect-ratio: 4/3;}
         video { width: 100%; height: 100%; display: block; transform: scaleX(-1); object-fit:cover;}
         #overlay-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5; }
 
@@ -73,6 +73,8 @@
     </style>
 </head>
 <body>
+    <div id="sidebarOverlay"></div>
+
 
     <div class="sidebar">
         <div class="sidebar-header">Faculty Portal</div>
@@ -323,12 +325,27 @@
             window.location.reload();
         }
 
-        const toggle = document.getElementById("menuToggle");
+const toggle = document.getElementById("menuToggle");
 const sidebar = document.querySelector(".sidebar");
+const overlay = document.getElementById("sidebarOverlay");
 
 toggle.addEventListener("click", ()=>{
   sidebar.classList.toggle("active");
+  overlay.classList.toggle("active");
 });
+
+overlay.addEventListener("click", ()=>{
+  sidebar.classList.remove("active");
+  overlay.classList.remove("active");
+});
+
+document.querySelectorAll(".menu-item").forEach(item=>{
+  item.addEventListener("click", ()=>{
+    sidebar.classList.remove("active");
+    overlay.classList.remove("active");
+  });
+});
+
 
     </script>
 </body>

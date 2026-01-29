@@ -55,6 +55,8 @@
     </style>
 </head>
 <body>
+<div id="sidebarOverlay"></div>
+
 
     <div class="sidebar">
         <div class="sidebar-header"><i class="bi bi-person-badge"></i> Student Portal</div>
@@ -139,12 +141,27 @@
         const options = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
         document.getElementById('currentDate').innerText = new Date().toLocaleDateString('en-US', options);
 
-        const toggle = document.getElementById("menuToggle");
+const toggle = document.getElementById("menuToggle");
 const sidebar = document.querySelector(".sidebar");
+const overlay = document.getElementById("sidebarOverlay");
 
 toggle.addEventListener("click", ()=>{
   sidebar.classList.toggle("active");
+  overlay.classList.toggle("active");
 });
+
+overlay.addEventListener("click", ()=>{
+  sidebar.classList.remove("active");
+  overlay.classList.remove("active");
+});
+
+document.querySelectorAll(".menu-item").forEach(item=>{
+  item.addEventListener("click", ()=>{
+    sidebar.classList.remove("active");
+    overlay.classList.remove("active");
+  });
+});
+
     </script>
 </body>
 </html>

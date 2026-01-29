@@ -20,7 +20,7 @@
         body { font-family: 'Segoe UI', sans-serif; background: var(--main-bg); margin: 0; display: flex; overflow-x: hidden; }
 
         /* Layout */
-        .sidebar { width: 260px; height: 100vh; background: var(--sidebar-bg); border-right: 1px solid #e0e0e0; position: fixed; left: 0; top: 0; z-index: 1000; }
+        .sidebar { width: 260px; height: 100vh; background: var(--sidebar-bg); border-right: 1px solid #e0e0e0; position: fixed; top: 0; z-index: 1000; }
         .sidebar-header { padding: 25px; font-size: 22px; font-weight: bold; color: var(--primary); border-bottom: 1px solid #f1f3f4; }
         .menu-item { padding: 14px 25px; display: flex; align-items: center; gap: 15px; color: var(--text-light); text-decoration: none; font-weight: 500; transition: 0.3s; }
         .menu-item.active { background: #e8f0fe; color: var(--primary); border-left: 5px solid var(--primary); }
@@ -111,6 +111,8 @@
     </style>
 </head>
 <body>
+<div id="sidebarOverlay"></div>
+
 
     <div class="sidebar">
         <div class="sidebar-header">Faculty Portal</div>
@@ -382,12 +384,27 @@ function drawBoxes(results) {
             window.location.reload();
         }
 
-        const toggle = document.getElementById("menuToggle");
+const toggle = document.getElementById("menuToggle");
 const sidebar = document.querySelector(".sidebar");
+const overlay = document.getElementById("sidebarOverlay");
 
 toggle.addEventListener("click", ()=>{
   sidebar.classList.toggle("active");
+  overlay.classList.toggle("active");
 });
+
+overlay.addEventListener("click", ()=>{
+  sidebar.classList.remove("active");
+  overlay.classList.remove("active");
+});
+
+document.querySelectorAll(".menu-item").forEach(item=>{
+  item.addEventListener("click", ()=>{
+    sidebar.classList.remove("active");
+    overlay.classList.remove("active");
+  });
+});
+
 
     </script>
 </body>

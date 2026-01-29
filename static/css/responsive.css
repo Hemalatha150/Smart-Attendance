@@ -1,25 +1,51 @@
  /* =========================
-   GLOBAL MOBILE FIXES
+   GLOBAL FIXES
 ========================= */
 
 *{
-  box-sizing: border-box;
+  box-sizing:border-box;
 }
 
-img, video{
-  max-width: 100%;
+html,body{
+  margin:0;
+  padding:0;
+  width:100%;
+  overflow-x:hidden;
+}
+
+img,video{
+  max-width:100%;
 }
 
 /* =========================
-   HAMBURGER BUTTON
+   HAMBURGER
 ========================= */
 
 .hamburger{
-  font-size: 22px;
-  background: none;
-  border: none;
-  cursor: pointer;
-  display: none;
+  font-size:22px;
+  background:none;
+  border:none;
+  cursor:pointer;
+  display:none;
+}
+
+/* =========================
+   SIDEBAR OVERLAY
+========================= */
+
+#sidebarOverlay{
+  position:fixed;
+  top:0;
+  left:0;
+  width:100%;
+  height:100%;
+  background:rgba(0,0,0,0.4);
+  display:none;
+  z-index:999;
+}
+
+#sidebarOverlay.active{
+  display:block;
 }
 
 /* =========================
@@ -28,116 +54,194 @@ img, video{
 
 @media (max-width:768px){
 
-  /* Show hamburger */
-  .hamburger{
-    display:block;
-  }
+/* ===== HAMBURGER ===== */
 
-  /* ===== SIDEBAR ===== */
+.hamburger{
+  display:block !important;
+  margin:0;
+  padding:0;
+}
 
-  .sidebar{
-    position: fixed;
-    left: -260px;
-    top:0;
-    width:260px;
-    height:100%;
-    background:#fff;
-    transition:0.3s;
-    z-index:1000;
-    overflow-y:auto;
-  }
+/* ===== SIDEBAR ===== */
 
-  .sidebar.active{
-    left:0;
-  }
+.sidebar{
+  position:fixed;
+  left:-260px;
+  top:0;
+  width:260px;
+  height:100%;
+  background:#fff;
+  transition:0.3s;
+  z-index:1000;
+  overflow-y:auto;
+}
 
-  /* ===== MAIN CONTENT ===== */
+.sidebar.active{
+  left:0;
+}
 
-  .main-content,
-  .main-container{
-    margin-left:0 !important;
-    width:100% !important;
-  }
+/* ===== MAIN LAYOUT ===== */
 
-  .content-body,
-  .content-container{
-    padding:15px !important;
-  }
+.main-content,
+.main-container{
+  margin-left:0 !important;
+  width:100% !important;
+}
 
-  /* ===== HEADER ===== */
+/* ===== HEADER ===== */
 
-  .top-header{
-    padding:10px 15px !important;
-    justify-content:space-between;
-  }
+.top-header{
+  padding:10px 12px !important;
+  display:flex;
+  align-items:center;
+  gap:10px;
+}
 
-  /* ===== CARDS ===== */
+.top-header > *:not(.hamburger){
+  margin-left:auto;
+}
 
-  .stats-grid{
-    grid-template-columns:1fr !important;
-  }
+/* ===== CONTENT PADDING ===== */
 
-  .stat-card{
-    padding:15px;
-  }
+.container,
+.content-body,
+.content-container{
+  padding:12px !important;
+}
 
-  /* ===== FORMS ===== */
+/* ===== GRIDS STACK ===== */
 
-  .selection-container{
-    flex-direction:column;
-    align-items:stretch;
-  }
+.stats-grid,
+.action-grid,
+.dashboard-cards{
+  grid-template-columns:1fr !important;
+  gap:16px;
+}
 
-  .filter-inputs{
-    flex-direction:column;
-  }
+/* ===== CARDS ===== */
 
-  .form-group{
-    width:100%;
-  }
+.stat-card,
+.action-card{
+  width:100% !important;
+  margin:0 !important;
+  padding:16px !important;
+}
 
-  /* ===== TABLE FIX ===== */
+/* ===== TEXT SCALE ===== */
 
-  .table-container{
-    overflow-x:auto;
-  }
+body{
+  font-size:16px;
+}
 
-  table{
-    min-width:600px;
-  }
+h1{font-size:22px !important;}
+h2{font-size:20px !important;}
+h3{font-size:18px !important;}
 
-  /* =========================
-     CAMERA RESPONSIVE
-  ========================= */
+/* ===== FORMS ===== */
 
-  .camera-container,
-  .video-container,
-  .camera-box,
-  #video,
-  video{
-    width:100% !important;
-    height:auto !important;
-  }
+.selection-container{
+  flex-direction:column;
+  align-items:stretch;
+}
 
-  video{
-    object-fit:cover;
-    border-radius:12px;
-  }
+.filter-inputs{
+  flex-direction:column;
+}
 
-  .controls{
-    flex-direction:column;
-    gap:10px;
-  }
+.form-group{
+  width:100%;
+}
 
-  .btn-generate,
-  .btn-primary{
-    width:100%;
-  }
+/* ===== TABLE SCROLL ===== */
 
-  /* ===== DASHBOARD CARDS ===== */
+.table-container,
+.table-card,
+.activity-section{
+  overflow-x:auto;
+}
 
-  .dashboard-cards{
-    grid-template-columns:1fr !important;
-  }
+table{
+  min-width:650px;
+}
+
+/* ===== BUTTONS ===== */
+
+.btn-action{
+  padding:6px 8px;
+  font-size:12px;
+}
+
+/* ===== MODAL ===== */
+
+.modal-content{
+  width:95% !important;
+  max-width:95% !important;
+  padding:20px !important;
+  border-radius:14px;
+}
+
+/* ===== CAMERA ===== */
+
+.camera-container,
+.video-container,
+.camera-box,
+.video-wrapper,
+#video,
+video{
+  width:100% !important;
+  height:auto !important;
+  max-height:420px;
+}
+
+video{
+  object-fit:cover;
+  border-radius:12px;
+}
+
+.controls{
+  flex-direction:column;
+  gap:10px;
+}
+
+.btn-primary,
+.btn-generate{
+  width:100%;
+}
+
+/* ===== LOGIN PAGE FIX ===== */
+
+.login-card{
+  width:92% !important;
+  max-width:420px;
+  padding:20px !important;
+  margin:auto;
+}
+
+.login-card h2{
+  font-size:20px;
+  text-align:center;
+}
+
+.login-card input{
+  font-size:16px;
+  padding:12px;
+}
+
+.login-btn{
+  width:100%;
+  padding:14px;
+  font-size:16px;
+}
+
+.login-tabs{
+  display:flex;
+  width:100%;
+}
+
+.login-tabs button{
+  flex:1;
+  padding:10px;
+  font-size:14px;
+}
 
 }

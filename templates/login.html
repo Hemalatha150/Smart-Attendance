@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Login Portal - Attendance System</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
@@ -9,7 +10,15 @@
 
     <style>
         body { font-family: 'Segoe UI', sans-serif; background: #F0F2F5; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
-        .login-card { background: white; padding: 40px; border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.1); width: 400px; text-align: center; }
+
+        .login-card{
+  width:95%;
+  max-width:420px;
+  padding:25px;
+  border-radius:14px;
+  box-shadow:0 5px 20px rgba(0,0,0,0.08);
+  background:white;
+}
         
         .role-selector { display: flex; background: #E4E7ED; padding: 5px; border-radius: 8px; margin-bottom: 25px; }
         .role-btn { flex: 1; padding: 10px; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; background: none; color: #606266; transition: 0.3s; }
@@ -31,6 +40,9 @@
         }
 
         .btn-login { background: #1A73E8; color: white; border: none; padding: 14px; border-radius: 6px; cursor: pointer; width: 100%; font-weight: bold; font-size: 16px; margin-top: 10px; }
+
+        
+
     </style>
 </head>
 <body>
