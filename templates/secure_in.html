@@ -1,4 +1,4 @@
- <!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -79,6 +79,12 @@ video{width:100%;height:100%;object-fit:cover;transform:scaleX(-1)}
 <script>
 let lastSent = 0;
 let lastLogged = {};
+let lastApiCall = 0;
+
+const API_COOLDOWN = 4000; // 4 sec gap between API calls
+const FACE_COOLDOWN = 6000; // per face cooldown
+
+
 
 const webcam = document.getElementById("webcam");
 const hiddenCanvas = document.getElementById("hidden-canvas");
@@ -94,8 +100,9 @@ async function startCamera(){
 }
 
 async function processAttendance(){
-  if(Date.now() - lastSent < 600) return;
-  lastSent = Date.now();
+
+  // 🛑 GLOBAL API COOLDOWN
+  if(Date.now() - lastApiCall < API_COOLDOWN) return;
 
   if(!webcam.videoWidth) return;
 
@@ -118,11 +125,14 @@ async function processAttendance(){
   });
 
   const data = await res.json();
-  if(data.success){
+
+  if(data.success && data.results.length > 0){
+    lastApiCall = Date.now(); // only cooldown if face detected
     drawBoxes(data.results);
     updateLog(data.results);
   }
 }
+
 
 function drawBoxes(results){
   overlayCanvas.width = webcam.videoWidth;
@@ -145,38 +155,74 @@ function drawBoxes(results){
 }
 
 function updateLog(results){
-  results.forEach(r=>{
 
-    // 🔴 UNKNOWN FACE LOG
+  results.forEach(r => {
+
+    const now = Date.now();
+
+    // ========================
+    // 🔴 UNKNOWN FACE CONTROL
+    // ========================
     if(r.color === "red"){
-      if(logList.innerText.includes("No activity")) logList.innerHTML = "";
+
+      if(lastLogged["unknown"] && (now - lastLogged["unknown"] < FACE_COOLDOWN)){
+        return;
+      }
+
+      lastLogged["unknown"] = now;
+
+      if(logList.innerText.includes("No activity")){
+        logList.innerHTML = "";
+      }
 
       const li = document.createElement("li");
       li.style.color = "#d93025";
       li.style.fontWeight = "bold";
       li.innerHTML = `<span>Unknown Face</span><span>Not registered</span>`;
       logList.prepend(li);
+
       return;
     }
 
-    // 🟩 / 🟧 REGISTERED LOG
+    // ========================
+    // 🟩 / 🟧 KNOWN FACES
+    // ========================
     if(!["green","orange"].includes(r.color)) return;
 
-    if(lastLogged[r.reg_no] && Date.now() - lastLogged[r.reg_no] < 5000) return;
-    lastLogged[r.reg_no] = Date.now();
+    // Per-student cooldown
+    if(lastLogged[r.reg_no] && (now - lastLogged[r.reg_no] < FACE_COOLDOWN)){
+      return;
+    }
 
-    if(logList.innerText.includes("No activity")) logList.innerHTML = "";
+    lastLogged[r.reg_no] = now;
+
+    if(logList.innerText.includes("No activity")){
+      logList.innerHTML = "";
+    }
 
     const match = r.status.match(/\d{2}:\d{2}:\d{2}/);
     const t = match ? match[0] : "--:--:--";
-    const msg = r.color === "green" ? "Marked at" : "Already marked at";
+
+    const msg = r.color === "green"
+      ? "Marked at"
+      : "Already marked at";
 
     const li = document.createElement("li");
     li.className = r.color === "green" ? "log-success" : "log-warning";
     li.innerHTML = `<span>${r.reg_no}</span><span>${msg} ${t}</span>`;
+
     logList.prepend(li);
+
+    // ========================
+    // 🧹 Limit log size
+    // ========================
+    if(logList.children.length > 20){
+      logList.removeChild(logList.lastChild);
+    }
+
   });
 }
+
 
 window.onload = startCamera;
 </script>

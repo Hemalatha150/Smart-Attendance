@@ -433,126 +433,119 @@ def student_login():
 
 # ===================
 # MARK ATTENDANCE
-# ===================
-
 @app.route('/api/mark_attendance', methods=['POST'])
 def mark_attendance():
     try:
         data = request.json
-
         mode = data.get('mode', 'IN').upper()
-        subject = data.get('subject', 'GATE ENTRY')
-        period = data.get('period', 'NA')
-        subj = f"{subject} ({period})"
 
-        # ---------- IMAGE ----------
         img_bytes = base64.b64decode(data['image'].split(',')[1])
         frame = cv2.imdecode(np.frombuffer(img_bytes, np.uint8), cv2.IMREAD_COLOR)
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         pil_img = Image.fromarray(rgb)
 
-        # ---------- DETECT ----------
         boxes, _ = mtcnn.detect(pil_img)
-        if boxes is None:
+
+        if boxes is None or len(boxes) == 0:
             return jsonify({"success": True, "results": []})
 
-        # ---------- DB ----------
+        face_tensors = mtcnn.extract(pil_img, boxes, None)
+        if face_tensors is None:
+            return jsonify({"success": True, "results": []})
+
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
-        cursor.execute("SELECT reg_no, name, branch, section, year, embedding FROM faces")
+        cursor.execute("SELECT reg_no, name, embedding FROM faces")
         students = cursor.fetchall()
 
         today = datetime.now().strftime("%Y-%m-%d")
         now_time = datetime.now().strftime("%H:%M:%S")
 
+        used_regnos = set()  # 🚫 prevent same reg_no twice in one frame
         results = []
 
-        # ---------- PER FACE (CRITICAL FIX) ----------
-        for box in boxes:
+        for i, box in enumerate(boxes):
             x1, y1, x2, y2 = [int(v) for v in box]
 
-            res = {
-                "box": [x1, y1, x2, y2],
-                "reg_no": "Unknown",
-                "status": "Not registered",
-                "color": "red"
-            }
-
-            # 🔥 MANUAL FACE CROP (THIS FIXES YOUR ISSUE)
-            face_crop = rgb[y1:y2, x1:x2]
-            if face_crop.size == 0:
-                results.append(res)
-                continue
-
-            face_crop = cv2.resize(face_crop, (160, 160))
-            face_tensor = torch.tensor(face_crop).permute(2, 0, 1).unsqueeze(0).float() / 255.0
+            face_t = face_tensors[i]
+            if face_t.dim() == 3:
+                face_t = face_t.unsqueeze(0)
 
             with torch.no_grad():
-                emb = model(face_tensor).cpu().numpy().flatten()
+                emb = model(face_t).cpu().numpy().flatten()
                 emb = emb / (np.linalg.norm(emb) + 1e-6)
 
-            best_match = None
-            best_dist = 10.0
+            best = None
+            best_dist = 999
+            second_best = 999
 
-            for r_no, name, br, sec, yr, emb_blob in students:
-                if not emb_blob:
-                    continue
-
+            for rno, name, emb_blob in students:
                 db_emb = np.frombuffer(emb_blob, dtype=np.float32)
                 db_emb = db_emb / (np.linalg.norm(db_emb) + 1e-6)
-
                 dist = np.linalg.norm(emb - db_emb)
 
                 if dist < best_dist:
+                    second_best = best_dist
                     best_dist = dist
-                    best_match = (r_no, name, br, sec, yr)
+                    best = (rno, name)
+                elif dist < second_best:
+                    second_best = dist
 
-            # ---------- UNKNOWN ----------
-            if not best_match or best_dist > 0.62:
-                results.append(res)
+            # ❌ STRICT UNKNOWN CHECK
+            if (
+                best is None or
+                best_dist > 0.62 or
+                (second_best - best_dist) < 0.08 or
+                best[0] in used_regnos
+            ):
+                results.append({
+                    "box": [x1, y1, x2, y2],
+                    "reg_no": "Unknown",
+                    "status": "Not registered",
+                    "color": "red"
+                })
                 continue
 
-            # ---------- REGISTERED ----------
-            r_no, name, br, sec, yr = best_match
-            res["reg_no"] = r_no
+            reg_no, name = best
+            used_regnos.add(reg_no)
 
+            # Already marked?
             cursor.execute(
                 "SELECT time FROM attendance WHERE reg_no=? AND date=? AND status=?",
-                (r_no, today, mode)
+                (reg_no, today, mode)
             )
             row = cursor.fetchone()
 
             if row:
-                res.update({
+                results.append({
+                    "box": [x1, y1, x2, y2],
+                    "reg_no": reg_no,
                     "status": f"Already marked at {row[0]}",
                     "color": "orange"
                 })
-                results.append(res)
                 continue
 
-            cursor.execute("""
-                INSERT INTO attendance
-                (reg_no, name, branch, section, year, subject, date, time, status)
-                VALUES (?,?,?,?,?,?,?,?,?)
-            """, (r_no, name, br, sec, yr, subj, today, now_time, mode))
+            cursor.execute(
+                "INSERT INTO attendance (reg_no, name, date, time, status) VALUES (?,?,?,?,?)",
+                (reg_no, name, today, now_time, mode)
+            )
+            conn.commit()
 
-            res.update({
+            results.append({
+                "box": [x1, y1, x2, y2],
+                "reg_no": reg_no,
                 "status": f"Marked at {now_time}",
                 "color": "green"
             })
 
-            results.append(res)
-
-        conn.commit()
         conn.close()
-
         return jsonify({"success": True, "results": results})
 
     except Exception as e:
         print("MARK ERROR:", e)
         return jsonify({"success": False, "message": str(e)})
 
-# ==========================
+
 # 5) MANAGE STUDENTS
 # ==========================
 @app.route('/manage_students')
