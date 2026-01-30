@@ -135,7 +135,7 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 mtcnn = MTCNN(
     image_size=160,
     margin=12,
-    keep_all=False,
+    keep_all=True,
     thresholds=[0.6, 0.7, 0.7],
     device=torch.device('cpu'),
     post_process=False,
@@ -435,231 +435,122 @@ def student_login():
 # MARK ATTENDANCE
 # ===================
 
-# --- ఈ లైన్ ఖచ్చితంగా ఫంక్షన్ బయట (Global గా) ఉండాలి ---
-user_states = {} 
-
 @app.route('/api/mark_attendance', methods=['POST'])
 def mark_attendance():
     try:
         data = request.json
-        mode = data.get('mode', '').upper().strip()
-        subject = str(data.get('subject', 'General')).strip()
-        period = str(data.get('period', '')).strip()
+
+        mode = data.get('mode', 'IN').upper()
+        subject = data.get('subject', 'GATE ENTRY')
+        period = data.get('period', 'NA')
         subj = f"{subject} ({period})"
 
-        f_yr = str(data.get('year')).strip()
-        f_br = str(data.get('branch')).strip().upper()
-        f_sec = str(data.get('section')).strip().upper()
-
-        img_bytes = base64.b64decode(data.get('image').split(',')[1])
+        # ---------- IMAGE ----------
+        img_bytes = base64.b64decode(data['image'].split(',')[1])
         frame = cv2.imdecode(np.frombuffer(img_bytes, np.uint8), cv2.IMREAD_COLOR)
-        h, w, _ = frame.shape
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-
-
         pil_img = Image.fromarray(rgb)
-        boxes, _ = mtcnn.detect(pil_img)
-        final_results = []
 
+        # ---------- DETECT ----------
+        boxes, _ = mtcnn.detect(pil_img)
         if boxes is None:
             return jsonify({"success": True, "results": []})
 
-        mesh_results = face_mesh.process(rgb)
-        face_tensors = mtcnn.extract(pil_img, boxes, None)
-
-        if face_tensors is None or len(face_tensors) == 0:
-            return jsonify({"success": True, "results": []})
-
+        # ---------- DB ----------
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         cursor.execute("SELECT reg_no, name, branch, section, year, embedding FROM faces")
-        all_students = cursor.fetchall()
+        students = cursor.fetchall()
 
-        curr_time = datetime.now()
-        date_str = curr_time.strftime("%Y-%m-%d")
+        today = datetime.now().strftime("%Y-%m-%d")
+        now_time = datetime.now().strftime("%H:%M:%S")
 
-        t_str = curr_time.strftime("%H:%M:%S")
+        results = []
 
+        # ---------- PER FACE (CRITICAL FIX) ----------
+        for box in boxes:
+            x1, y1, x2, y2 = [int(v) for v in box]
 
-        for i in range(len(boxes)):
-            box = boxes[i]
-            x1, y1, x2, y2 = box.tolist()
-            face_area = (x2 - x1) * (y2 - y1)
+            res = {
+                "box": [x1, y1, x2, y2],
+                "reg_no": "Unknown",
+                "status": "Not registered",
+                "color": "red"
+            }
 
-            res = {"box": box.tolist(), "reg_no": "Unknown", "status": "Identifying...", "color": "white"}
+            # 🔥 MANUAL FACE CROP (THIS FIXES YOUR ISSUE)
+            face_crop = rgb[y1:y2, x1:x2]
+            if face_crop.size == 0:
+                results.append(res)
+                continue
 
-            face_t = face_tensors[i]
-            # CRASH FIX ONLY – LOGIC NOT TOUCHED
-            if face_t.dim() == 2:
-              face_t = face_t.unsqueeze(0).repeat(3, 1, 1)
-            if face_t.dim() == 3:
-                face_t = face_t.unsqueeze(0)
+            face_crop = cv2.resize(face_crop, (160, 160))
+            face_tensor = torch.tensor(face_crop).permute(2, 0, 1).unsqueeze(0).float() / 255.0
 
             with torch.no_grad():
-                new_emb = model(face_t.to(device)).cpu().numpy().flatten()
-                new_emb = new_emb / (np.linalg.norm(new_emb) + 1e-6)
+                emb = model(face_tensor).cpu().numpy().flatten()
+                emb = emb / (np.linalg.norm(emb) + 1e-6)
 
-            # ---------- MATCH ----------
             best_match = None
             best_dist = 10.0
-            second_best = 10.0
 
-            for r_no, name, br, sec, yr, emb_blob in all_students:
+            for r_no, name, br, sec, yr, emb_blob in students:
                 if not emb_blob:
                     continue
 
                 db_emb = np.frombuffer(emb_blob, dtype=np.float32)
                 db_emb = db_emb / (np.linalg.norm(db_emb) + 1e-6)
 
-                dist = np.linalg.norm(new_emb - db_emb)
+                dist = np.linalg.norm(emb - db_emb)
 
                 if dist < best_dist:
-                    second_best = best_dist
                     best_dist = dist
                     best_match = (r_no, name, br, sec, yr)
-                elif dist < second_best:
-                    second_best = dist
 
-            STRICT_THRESHOLD = 0.62
-            GAP_REQUIRED = 0.06
-
-            if not best_match or best_dist > STRICT_THRESHOLD or (second_best - best_dist) < GAP_REQUIRED:
-                res.update({"status": "Unknown Face", "color": "red"})
-                final_results.append(res)
+            # ---------- UNKNOWN ----------
+            if not best_match or best_dist > 0.62:
+                results.append(res)
                 continue
 
+            # ---------- REGISTERED ----------
             r_no, name, br, sec, yr = best_match
             res["reg_no"] = r_no
 
-            # ---------- 1. CLASS CHECK ----------
-            if str(yr) != f_yr or str(br) != f_br or str(sec) != f_sec:
-                res.update({"status": f"Wrong Class! {yr}-{br}-{sec}", "color": "orange"})
-                final_results.append(res)
-                continue
-
-            # ---------- 2. MODE VALIDATION ----------
-            skip_to_liveness = True
-
-            if mode == "IN":
-                cursor.execute(
-                    "SELECT time FROM attendance WHERE reg_no=? AND date=? AND subject LIKE ? AND status='IN'",
-                    (r_no, date_str, f"%{subject}%")
-                )
-                already = cursor.fetchone()
-                if already:
-                    res.update({"status": f"Already marked at {already[0]}", "color": "orange"})
-                    skip_to_liveness = False
-
-            elif mode == "OUT":
-                cursor.execute(
-                    "SELECT time FROM attendance WHERE reg_no=? AND date=? AND status='IN' AND subject LIKE ? ORDER BY id DESC LIMIT 1",
-                    (r_no, date_str, f"%{subject}%")
-                )
-                in_row = cursor.fetchone()
-                if not in_row:
-                    res.update({"status": "IN not marked yet", "color": "orange"})
-                    skip_to_liveness = False
-                else:
-                    in_time = datetime.strptime(f"{date_str} {in_row[0]}","%Y-%m-%d %H:%M:%S")
-
-                    diff_min = (curr_time - in_time).total_seconds() / 60
-
-                    if diff_min < 5:
-                        res.update({"status": f"Wait {math.ceil(5 - diff_min)} mins", "color": "orange"})
-                        skip_to_liveness = False
-                    else:
-                        cursor.execute(
-                            "SELECT time FROM attendance WHERE reg_no=? AND date=? AND status='OUT' AND subject LIKE ? ORDER BY id DESC LIMIT 1",
-                            (r_no, date_str, f"%{subject}%")
-                        )
-                        out_already = cursor.fetchone()
-                        if out_already:
-                            res.update({"status": f"Already OUT at {out_already[0]}", "color": "orange"})
-                            skip_to_liveness = False
-
-            if not skip_to_liveness:
-                final_results.append(res)
-                continue
-
-            # ---------- 3. LIVENESS ----------
-            if r_no not in user_states:
-                user_states[r_no] = {
-                    "blinked": False,
-                    "turned": False,
-                    "ear_frames": 0,
-                    "base_area": face_area,
-                    "base_cx": (x1 + x2) / 2,
-                    "base_cy": (y1 + y2) / 2
-                }
-
-            state = user_states[r_no]
-            cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
-
-            if abs(face_area - state["base_area"]) / state["base_area"] > 0.20 or \
-               math.hypot(cx - state["base_cx"], cy - state["base_cy"]) > 30:
-                res.update({"status": "SPOOF DETECTED", "color": "red"})
-                del user_states[r_no]
-                final_results.append(res)
-                continue
-
-            if not mesh_results.multi_face_landmarks:
-                res.update({"status": "FACE NOT CLEAR", "color": "red"})
-                final_results.append(res)
-                continue
-
-            fl = mesh_results.multi_face_landmarks[i]
-
-            ear = (abs(fl.landmark[145].y - fl.landmark[159].y) +
-                   abs(fl.landmark[374].y - fl.landmark[386].y)) / 2
-
-            if not state["blinked"]:
-                if ear < 0.035:
-                    state["ear_frames"] += 1
-                else:
-                    state["ear_frames"] = 0
-
-                if state["ear_frames"] >= 2:
-                    state["blinked"] = True
-                    res.update({"status": "BLINK OK! TURN HEAD", "color": "blue"})
-                else:
-                    res.update({"status": "STEP 1: BLINK NOW", "color": "yellow"})
-
-                final_results.append(res)
-                continue
-
-            turn_ratio = (fl.landmark[1].x * w - fl.landmark[33].x * w) / \
-                         (fl.landmark[263].x * w - fl.landmark[33].x * w + 1e-6)
-
-            if not state["turned"]:
-                if turn_ratio < 0.30 or turn_ratio > 0.70:
-                    state["turned"] = True
-                    res.update({"status": "HEAD TURN OK!", "color": "blue"})
-                else:
-                    res.update({"status": "STEP 2: TURN HEAD", "color": "cyan"})
-
-                final_results.append(res)
-                continue
-
-            # ---------- 4. FINAL SUCCESS ----------
-            t_str = curr_time.strftime("%H:%M:%S")
             cursor.execute(
-                "INSERT INTO attendance (reg_no, name, branch, section, year, subject, date, time, status) VALUES (?,?,?,?,?,?,?,?,?)",
-                (r_no, name, br, sec, yr, subj, date_str, t_str, mode)
+                "SELECT time FROM attendance WHERE reg_no=? AND date=? AND status=?",
+                (r_no, today, mode)
             )
+            row = cursor.fetchone()
 
-            res.update({"status": f"{mode} MARKED: {t_str}", "color": "green"})
-            del user_states[r_no]
-            final_results.append(res)
+            if row:
+                res.update({
+                    "status": f"Already marked at {row[0]}",
+                    "color": "orange"
+                })
+                results.append(res)
+                continue
+
+            cursor.execute("""
+                INSERT INTO attendance
+                (reg_no, name, branch, section, year, subject, date, time, status)
+                VALUES (?,?,?,?,?,?,?,?,?)
+            """, (r_no, name, br, sec, yr, subj, today, now_time, mode))
+
+            res.update({
+                "status": f"Marked at {now_time}",
+                "color": "green"
+            })
+
+            results.append(res)
 
         conn.commit()
         conn.close()
-        return jsonify({"success": True, "results": final_results})
+
+        return jsonify({"success": True, "results": results})
 
     except Exception as e:
         print("MARK ERROR:", e)
         return jsonify({"success": False, "message": str(e)})
-
-
 
 # ==========================
 # 5) MANAGE STUDENTS
